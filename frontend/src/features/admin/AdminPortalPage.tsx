@@ -635,7 +635,7 @@ export function AdminPortalPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `zona-platform-audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `kova-platform-audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     toast.success(`Exported ${rows.length} audit log rows`);
@@ -1700,7 +1700,7 @@ export function AdminPortalPage() {
                 type="email"
                 value={newAdminEmail}
                 onChange={(e) => setNewAdminEmail(e.target.value)}
-                placeholder="operator@zonaplatform.com"
+                placeholder="operator@kovapos.com"
                 data-testid="admin-create-superadmin-email"
                 required
               />
