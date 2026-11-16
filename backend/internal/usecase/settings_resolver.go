@@ -49,6 +49,19 @@ func NewSettingsResolver(queries *db.Queries, rdb *redis.Client, hub *ws.Hub) *S
 	}
 }
 
+// WithQueries returns a transaction-scoped SettingsResolver so resolution inside an open pgx.Tx reuses the transaction connection instead of acquiring a second pool connection.
+func (s *SettingsResolver) WithQueries(q *db.Queries) *SettingsResolver {
+	if s == nil || q == nil {
+		return s
+	}
+	return &SettingsResolver{
+		queries:  q,
+		redis:    s.redis,
+		hub:      s.hub,
+		memCache: make(map[string]cachedSettingsEntry),
+	}
+}
+
 // ResolveAll evaluates every setting across System -> Business -> Branch -> Terminal -> Category -> Product.
 func (s *SettingsResolver) ResolveAll(ctx context.Context, sc SettingsContext) ([]domain.ResolvedSetting, error) {
 	resolved, _, _, err := s.ResolveAllWithMeta(ctx, sc)

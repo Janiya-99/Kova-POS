@@ -28,7 +28,7 @@ const (
 	legacyOwnerID       = "11111111-cccc-1111-1111-111111111101"
 	legacyAdminEmail    = "admin@zonaretail.com"
 	legacyAdminUserID   = "11111111-cccc-1111-1111-111111111106"
-	defaultTenantMaxCon = 10
+	defaultTenantMaxCon = 25
 )
 
 // TenantBundle holds the dedicated PostgreSQL pool and scoped usecases for one isolated company DB.
@@ -325,6 +325,7 @@ func (m *TenantManager) SyncTenantCompanyProfile(ctx context.Context, businessID
 
 	if req.IndustryProfile != "" {
 		_, _ = usecase.EnsureIndustryDepartmentsAndDesignations(ctx, queries, businessID, req.IndustryProfile)
+		_ = usecase.EnsureIndustryBrands(ctx, queries, businessID, req.IndustryProfile)
 	}
 	if settingsUC != nil {
 		if req.IndustryProfile != "" {
@@ -397,10 +398,26 @@ func (m *TenantManager) CloseAll() {
 	m.byDB = make(map[string]*TenantBundle)
 }
 
-// BootstrapZonaRetailTenantDB ensures `pos_tenant_zona_retail` exists as a completely separate physical DB
-// for Zona Retail Ltd, migrating existing live data from enterprise_pos (or cleanly seeding on fresh volumes)
-// while removing Nordic Minimal Co demo rows and legacy SuperAdmin user from the tenant DB.
+// BootstrapZonaRetailTenantDB ensures `pos_tenant_zona_retail` exists when no custom company registry has replaced it,
+// and pre-warms active isolated company DB bundles on startup.
 func (m *TenantManager) BootstrapZonaRetailTenantDB(ctx context.Context) error {
+	var totalCompanies int64
+	var hasZonaRegistered bool
+	_ = m.masterPool.QueryRow(ctx, `SELECT COUNT(*)::BIGINT FROM platform_companies`).Scan(&totalCompanies)
+	_ = m.masterPool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM platform_companies WHERE slug = $1)`, zonaRetailSlug).Scan(&hasZonaRegistered)
+
+	if totalCompanies > 0 && !hasZonaRegistered {
+		log.Printf("Skipping legacy %s bootstrap (%d custom company workspace(s) already registered)", zonaRetailSlug, totalCompanies)
+		if comps, err := m.masterQueries.ListPublicPlatformCompanies(ctx); err == nil {
+			for _, comp := range comps {
+				if _, bErr := m.GetByBusinessID(ctx, comp.ID); bErr != nil {
+					log.Printf("Warning: pre-warm tenant %s failed: %v", comp.Slug, bErr)
+				}
+			}
+		}
+		return nil
+	}
+
 	exists, err := dbinfra.DatabaseExists(ctx, m.masterPool, zonaRetailDB)
 	if err != nil {
 		return err

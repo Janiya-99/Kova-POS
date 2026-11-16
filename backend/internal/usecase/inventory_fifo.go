@@ -165,7 +165,7 @@ func insertGRNLinesTx(ctx context.Context, qtx *db.Queries, businessID, grnID uu
 		}
 		batchNo := strings.TrimSpace(it.BatchNumber)
 		if batchNo == "" {
-			batchNo = fmt.Sprintf("BATCH-%d-%d", time.Now().UnixNano()%1000000, i+1)
+			batchNo = fmt.Sprintf("%s-%d", nextDocCode("BATCH"), i+1)
 		}
 		orderedQty := it.OrderedQty
 		if orderedQty.LessThanOrEqual(decimal.Zero) {
@@ -247,7 +247,7 @@ func (u *InventoryFIFOUsecase) CreateGRN(ctx context.Context, businessID, branch
 
 	qtx := u.queries.WithTx(tx)
 
-	grnNumber := fmt.Sprintf("GRN-%s-%04d", time.Now().Format("20060102"), time.Now().Unix()%10000)
+	grnNumber := nextDocCode("GRN-" + time.Now().Format("20060102"))
 	grn, err := qtx.InsertGRN(ctx, db.InsertGRNParams{
 		BusinessID:        businessID,
 		BranchID:          branchID,
@@ -500,7 +500,7 @@ func (u *InventoryFIFOUsecase) approveGRNTx(ctx context.Context, qtx *db.Queries
 		BusinessID:     businessID,
 		BranchID:       uuid.NullUUID{UUID: grn.BranchID, Valid: true},
 		FiscalPeriodID: fpNull,
-		EntryNumber:    fmt.Sprintf("JE-GRN-%s-%d", grn.GrnNumber, time.Now().UnixNano()%1000),
+		EntryNumber:    nextDocCode("JE-GRN"),
 		SourceType:     "GRN_APPROVAL",
 		SourceID:       grnID,
 		Description:    fmt.Sprintf("GRN Intake %s (Inv: %s)", grn.GrnNumber, grn.SupplierInvoiceNo),
@@ -666,7 +666,7 @@ func RestoreFIFOBatches(
 		BranchID:    branchID,
 		ProductID:   productID,
 		GrnItemID:   uuid.NullUUID{},
-		BatchNumber: fmt.Sprintf("RET-%d", time.Now().UnixNano()%1000000),
+		BatchNumber: nextDocCode("RET"),
 		ExpiryDate:  pgtype.Date{},
 		UnitCost:    unitCost,
 		InitialQty:  qty,
@@ -791,9 +791,9 @@ func (u *InventoryFIFOUsecase) checkAndDraftLowStockDetailed(ctx context.Context
 	if len(cleanSKU) > 8 {
 		cleanSKU = cleanSKU[:8]
 	}
-	suffix := time.Now().UnixNano() % 100000
-	poNum := fmt.Sprintf("PO-AUTO-%s-%05d", cleanSKU, suffix)
-	invNum := fmt.Sprintf("PINV-AUTO-%s-%05d", cleanSKU, suffix)
+	autoCode := nextDocCode(cleanSKU)
+	poNum := "PO-AUTO-" + autoCode
+	invNum := "PINV-AUTO-" + autoCode
 
 	poNotes := fmt.Sprintf(
 		"Auto-PO triggered: %s stock %s <= minimum %s; replenishing %s @ $%s/unit (Supplier Invoice %s)",

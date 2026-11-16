@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/enterprise-pos/backend/internal/domain"
@@ -18,6 +19,15 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 )
+
+var docSeqCounter atomic.Uint64
+
+// nextDocCode produces a collision-free, human-readable document number safe across concurrent goroutines and restarts.
+func nextDocCode(prefix string) string {
+	seq := docSeqCounter.Add(1)
+	uid := strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	return fmt.Sprintf("%s-%s%03d", prefix, uid[:6], seq%1000)
+}
 
 // LowStockEnqueuer schedules background low-stock checks after checkout.
 type LowStockEnqueuer interface {
@@ -179,6 +189,10 @@ func (p *POSCheckoutUsecase) BootstrapPOS(ctx context.Context, tc domain.TenantC
 	if err != nil {
 		return nil, err
 	}
+	brands, err := p.queries.ListBrandsForBusiness(ctx, tc.BusinessID)
+	if err != nil {
+		brands = []db.ListBrandsForBusinessRow{}
+	}
 	customers, err := p.queries.ListCustomersForBusiness(ctx, tc.BusinessID)
 	if err != nil {
 		return nil, err
@@ -203,6 +217,7 @@ func (p *POSCheckoutUsecase) BootstrapPOS(ctx context.Context, tc domain.TenantC
 	return map[string]any{
 		"products":          products,
 		"categories":        categories,
+		"brands":            brands,
 		"customers":         customers,
 		"tax_rules":         taxRules,
 		"resolved_settings": resolvedSettings,
@@ -277,9 +292,10 @@ func (p *POSCheckoutUsecase) Checkout(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := p.queries.WithTx(tx)
+	settingsTx := p.settings.WithQueries(qtx)
 
 	invoiceID := uuid.New()
-	invoiceNum := fmt.Sprintf("#%03d %03d", 513, time.Now().Unix()%900+100)
+	invoiceNum := nextDocCode("INV-" + time.Now().UTC().Format("2006"))
 
 	type computedLine struct {
 		productID    uuid.UUID
@@ -373,7 +389,7 @@ func (p *POSCheckoutUsecase) Checkout(
 			roundingMode,
 		)
 
-		prodAllowNegative := p.settings.GetBool(ctx, SettingsContext{
+		prodAllowNegative := settingsTx.GetBool(ctx, SettingsContext{
 			BusinessID: tc.BusinessID,
 			BranchID:   &tc.BranchID,
 			TerminalID: &tc.TerminalID,
@@ -513,7 +529,7 @@ func (p *POSCheckoutUsecase) Checkout(
 		Amount:         aggGrand.Round(4),
 		TenderedAmount: tendered.Round(4),
 		ChangeGiven:    changeGiven.Round(4),
-		ReferenceNo:    fmt.Sprintf("TX-%d", time.Now().Unix()%100000),
+		ReferenceNo:    nextDocCode("TX"),
 	}); err != nil {
 		return nil, err
 	}
@@ -537,7 +553,7 @@ func (p *POSCheckoutUsecase) Checkout(
 			BusinessID: tc.BusinessID,
 			ID:         custNull.UUID,
 		}); cErr == nil && !cust.IsWalkIn {
-			ptsRateStr := p.settings.GetString(ctx, SettingsContext{
+			ptsRateStr := settingsTx.GetString(ctx, SettingsContext{
 				BusinessID: tc.BusinessID,
 				BranchID:   &tc.BranchID,
 			}, "pos.loyalty_points_per_unit", "1")
@@ -648,7 +664,7 @@ func (p *POSCheckoutUsecase) postSaleJournalTx(
 		BusinessID:     tc.BusinessID,
 		BranchID:       uuid.NullUUID{UUID: tc.BranchID, Valid: true},
 		FiscalPeriodID: fpNull,
-		EntryNumber:    fmt.Sprintf("JE-POS-%d", time.Now().UnixNano()%10000000),
+		EntryNumber:    nextDocCode("JE-POS"),
 		SourceType:     "POS_SALE",
 		SourceID:       invoiceID,
 		Description:    fmt.Sprintf("POS Sale %s (%s)", invoiceNumber, strings.ReplaceAll(payMethod, "_", " ")),
@@ -804,7 +820,7 @@ func (p *POSCheckoutUsecase) VoidOrRefundInvoice(
 	je, err := qtx.InsertJournalEntry(ctx, db.InsertJournalEntryParams{
 		BusinessID:  tc.BusinessID,
 		BranchID:    uuid.NullUUID{UUID: inv.BranchID, Valid: true},
-		EntryNumber: fmt.Sprintf("JE-REV-%d", time.Now().UnixNano()%10000000),
+		EntryNumber: nextDocCode("JE-REV"),
 		SourceType:  sourceType,
 		SourceID:    invoiceID,
 		Description: fmt.Sprintf("%s %s (%s)", actionLabel, inv.InvoiceNumber, reason),
@@ -950,7 +966,7 @@ func (p *POSCheckoutUsecase) CreateHeldBill(ctx context.Context, tc domain.Tenan
 	case "JOB_CARD":
 		holdPrefix = "BAY"
 	}
-	holdCode := fmt.Sprintf("%s-%02d", holdPrefix, time.Now().Unix()%90+10)
+	holdCode := nextDocCode(holdPrefix)
 	bill, err := qtx.InsertHeldBill(ctx, db.InsertHeldBillParams{
 		BusinessID:      tc.BusinessID,
 		BranchID:        tc.BranchID,
