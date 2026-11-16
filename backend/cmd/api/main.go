@@ -77,6 +77,7 @@ func main() {
 
 	adminAuditUC := usecase.NewAdminAuditUsecase(masterPool, masterQueries, nil, rdb)
 	adminAuditUC.SetProvisioner(tenantMgr)
+	adminAuditUC.SetHub(hub)
 	masterAuthUC.SetHub(hub)
 	mailClient := mailer.New(mailer.Config{
 		Host:       cfg.SMTPHost,
@@ -111,6 +112,7 @@ func main() {
 
 	handler := deliveryhttp.NewHandler(masterAuthUC, adminAuditUC, tenantMgr)
 	handler.SetRateLimiter(limiter)
+	handler.SetHub(hub)
 	deliveryhttp.RegisterRoutes(app, handler, masterAuthUC, tenantMgr, hub)
 
 	go func() {

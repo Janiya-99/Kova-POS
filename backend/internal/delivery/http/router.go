@@ -1,12 +1,16 @@
 package http
 
 import (
+	"strings"
+	"time"
+
 	"github.com/enterprise-pos/backend/internal/delivery/http/middleware"
 	"github.com/enterprise-pos/backend/internal/infrastructure/tenant"
 	"github.com/enterprise-pos/backend/internal/infrastructure/ws"
 	"github.com/enterprise-pos/backend/internal/usecase"
 	"github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
 // RegisterRoutes wires Master Control Plane routes separately from strict Database-per-Company tenant routes.
@@ -115,7 +119,7 @@ func RegisterRoutes(app *fiber.App, h *Handler, masterAuth *usecase.AuthUsecase,
 	v1.Post("/platform/bootstrap", adminLoginLimiter, h.PlatformBootstrap)
 	v1.Post("/admin/login", adminLoginLimiter, h.AdminLogin)
 
-	adminGroup := v1.Group("/admin", middleware.PlatformAdminMiddleware(masterAuth))
+	adminGroup := v1.Group("/admin", middleware.PlatformAdminMiddleware(masterAuth), h.RealtimeAdminMutationMiddleware())
 	adminGroup.Post("/logout", h.AdminLogout)
 	adminGroup.Post("/refresh", h.AdminRefreshSession)
 	adminGroup.Get("/sessions", h.AdminListSessions)
@@ -139,6 +143,9 @@ func RegisterRoutes(app *fiber.App, h *Handler, masterAuth *usecase.AuthUsecase,
 
 	// WebSocket Real-Time Channel (Tenant-scoped JWT + verified active session + company DB)
 	app.Use("/ws", wsLimiter, func(c *fiber.Ctx) error {
+		if c.Path() == "/ws/admin" {
+			return c.Next()
+		}
 		if websocket.IsWebSocketUpgrade(c) {
 			tok := c.Query("token")
 			tc, err := masterAuth.ParseJWT(tok)
@@ -160,29 +167,99 @@ func RegisterRoutes(app *fiber.App, h *Handler, masterAuth *usecase.AuthUsecase,
 		return fiber.ErrUpgradeRequired
 	})
 	app.Get("/ws", websocket.New(func(c *websocket.Conn) {
-		bizID, ok := c.Locals("ws_business_id").(interface{})
-		_ = bizID
-		if !ok {
-			_ = c.Close()
-			return
+		bizID, ok := c.Locals("ws_business_id").(uuid.UUID)
+		if !ok || bizID == uuid.Nil {
+			tc, err := masterAuth.ParseJWT(c.Query("token"))
+			if err != nil {
+				_ = c.Close()
+				return
+			}
+			bizID = tc.BusinessID
 		}
-		tc, err := masterAuth.ParseJWT(c.Query("token"))
-		if err != nil {
-			_ = c.Close()
-			return
-		}
-		hub.Register(tc.BusinessID, c)
-		defer hub.Unregister(tc.BusinessID, c)
+		hub.Register(bizID, c)
+		defer hub.Unregister(bizID, c)
+
+		_ = hub.WriteDirect(c, bizID, "CONNECTED", map[string]any{"ts": time.Now().UTC().UnixMilli()})
+
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			ticker := time.NewTicker(25 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					if err := hub.WriteDirect(c, bizID, "PING", map[string]any{"ts": time.Now().UTC().UnixMilli()}); err != nil {
+						return
+					}
+				}
+			}
+		}()
 
 		for {
-			if _, _, err := c.ReadMessage(); err != nil {
+			_, msg, err := c.ReadMessage()
+			if err != nil {
 				break
+			}
+			if strings.Contains(strings.ToLower(string(msg)), "ping") {
+				_ = hub.WriteDirect(c, bizID, "PONG", map[string]any{"ts": time.Now().UTC().UnixMilli()})
+			}
+		}
+	}))
+
+	// Isolated Platform Control Plane WebSocket Channel (/ws/admin)
+	app.Use("/ws/admin", wsLimiter, func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			tok := c.Query("token")
+			adminCtx, err := masterAuth.ParsePlatformAdminJWT(tok)
+			if err != nil {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized platform admin websocket"})
+			}
+			if sErr := masterAuth.ValidatePlatformAdminSession(c.UserContext(), adminCtx); sErr != nil {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": sErr.Error(), "code": "SESSION_INVALID"})
+			}
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+	app.Get("/ws/admin", websocket.New(func(c *websocket.Conn) {
+		hub.RegisterAdmin(c)
+		defer hub.UnregisterAdmin(c)
+
+		_ = hub.WriteDirect(c, uuid.Nil, "CONNECTED", map[string]any{"ts": time.Now().UTC().UnixMilli()})
+
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			ticker := time.NewTicker(25 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					if err := hub.WriteDirect(c, uuid.Nil, "PING", map[string]any{"ts": time.Now().UTC().UnixMilli()}); err != nil {
+						return
+					}
+				}
+			}
+		}()
+
+		for {
+			_, msg, err := c.ReadMessage()
+			if err != nil {
+				break
+			}
+			if strings.Contains(strings.ToLower(string(msg)), "ping") {
+				_ = hub.WriteDirect(c, uuid.Nil, "PONG", map[string]any{"ts": time.Now().UTC().UnixMilli()})
 			}
 		}
 	}))
 
 	// Authenticated Tenant Company Routes (100% dispatched to that company's dedicated pos_tenant_<slug> DB)
-	protected := v1.Group("", middleware.TenantAuthMiddleware(masterAuth, tenants), tenantAPILimiter)
+	protected := v1.Group("", middleware.TenantAuthMiddleware(masterAuth, tenants), tenantAPILimiter, h.RealtimeTenantMutationMiddleware())
 
 	protected.Post("/auth/logout", h.Logout)
 	protected.Post("/auth/refresh", h.RefreshSession)

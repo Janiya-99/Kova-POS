@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/enterprise-pos/backend/internal/domain"
+	"github.com/enterprise-pos/backend/internal/infrastructure/ws"
 	"github.com/enterprise-pos/backend/internal/repository/sqlc/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -121,6 +122,7 @@ type AdminAuditUsecase struct {
 	queries     *db.Queries
 	redis       *redis.Client
 	provisioner CompanyProvisioner
+	hub         *ws.Hub
 }
 
 // NewAdminAuditUsecase constructs an AdminAuditUsecase backed by the Master Control Plane DB.
@@ -135,6 +137,11 @@ func NewAdminAuditUsecase(pool *pgxpool.Pool, queries *db.Queries, _ *SettingsRe
 // SetProvisioner attaches the physical Database-per-Tenant manager to the Admin usecase.
 func (u *AdminAuditUsecase) SetProvisioner(p CompanyProvisioner) {
 	u.provisioner = p
+}
+
+// SetHub attaches the WebSocket hub for real-time Platform Control Plane telemetry updates.
+func (u *AdminAuditUsecase) SetHub(hub *ws.Hub) {
+	u.hub = hub
 }
 
 // RecordEvent writes an audit trail row safely into the Master DB without aborting the parent HTTP flow.
@@ -204,6 +211,14 @@ func (u *AdminAuditUsecase) RecordEvent(ctx context.Context, ev AuditEventInput)
 		IpAddress:    strings.TrimSpace(ev.IPAddress),
 		Status:       status,
 	})
+	if u.hub != nil {
+		u.hub.BroadcastAdmin("ADMIN_SYNC", map[string]any{
+			"module":       module,
+			"action":       strings.ToUpper(strings.TrimSpace(ev.Action)),
+			"company_slug": compSlug,
+			"status":       status,
+		})
+	}
 }
 
 // RecordTenantEvent records an audit entry attributed to the verified TenantContext.

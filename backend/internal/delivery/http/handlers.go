@@ -11,6 +11,7 @@ import (
 	"github.com/enterprise-pos/backend/internal/domain"
 	"github.com/enterprise-pos/backend/internal/infrastructure/ratelimit"
 	"github.com/enterprise-pos/backend/internal/infrastructure/tenant"
+	"github.com/enterprise-pos/backend/internal/infrastructure/ws"
 	"github.com/enterprise-pos/backend/internal/repository/sqlc/db"
 	"github.com/enterprise-pos/backend/internal/usecase"
 	"github.com/gofiber/fiber/v2"
@@ -23,6 +24,7 @@ type Handler struct {
 	adminAudit  *usecase.AdminAuditUsecase
 	tenants     *tenant.TenantManager
 	rateLimiter *ratelimit.Limiter
+	hub         *ws.Hub
 }
 
 // NewHandler constructs an HTTP Handler wired to Master Auth, Master Admin/Audit, and the TenantManager.
@@ -43,6 +45,95 @@ func NewHandler(
 func (h *Handler) SetRateLimiter(limiter *ratelimit.Limiter) {
 	if limiter != nil {
 		h.rateLimiter = limiter
+	}
+}
+
+// SetHub attaches the real-time WebSocket hub for broadcasting domain mutation events across terminals.
+func (h *Handler) SetHub(hub *ws.Hub) {
+	h.hub = hub
+}
+
+func resolveTenantMutationEvent(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/api/v1/pos/checkout"), strings.HasPrefix(path, "/api/v1/pos/invoices"):
+		return "SALE_COMPLETED"
+	case strings.HasPrefix(path, "/api/v1/products"), strings.HasPrefix(path, "/api/v1/categories"):
+		return "CATALOG_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/customers"):
+		return "CUSTOMER_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/suppliers"):
+		return "SUPPLIER_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/inventory"), strings.HasPrefix(path, "/api/v1/procurement"):
+		return "INVENTORY_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/accounting"):
+		return "ACCOUNTING_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/tax-groups"), strings.HasPrefix(path, "/api/v1/tax-rules"):
+		return "TAX_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/branches"), strings.HasPrefix(path, "/api/v1/terminals"):
+		return "BRANCH_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/access"):
+		return "RBAC_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/security"), strings.HasPrefix(path, "/api/v1/auth/sessions"):
+		return "SECURITY_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/notifications"):
+		return "NOTIFICATION_UPDATED"
+	case strings.HasPrefix(path, "/api/v1/company/settings"):
+		return "SETTINGS_UPDATED"
+	default:
+		return ""
+	}
+}
+
+// RealtimeTenantMutationMiddleware broadcasts typed real-time invalidation events to connected tenant terminals
+// immediately after any mutating endpoint completes cleanly.
+func (h *Handler) RealtimeTenantMutationMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		err := c.Next()
+		if err != nil || h.hub == nil || c.Response().StatusCode() >= 400 {
+			return err
+		}
+		method := c.Method()
+		if method != fiber.MethodPost && method != fiber.MethodPut && method != fiber.MethodPatch && method != fiber.MethodDelete {
+			return nil
+		}
+		evType := resolveTenantMutationEvent(c.Path())
+		if evType == "" {
+			return nil
+		}
+		if tc, ok := middleware.GetTenantContext(c); ok && tc.BusinessID != uuid.Nil {
+			h.hub.BroadcastTenant(tc.BusinessID, evType, map[string]any{
+				"path":      c.Path(),
+				"method":    method,
+				"actor_id":  tc.UserID.String(),
+				"branch_id": tc.BranchID.String(),
+				"ts":        time.Now().UTC().UnixMilli(),
+			})
+		}
+		return nil
+	}
+}
+
+// RealtimeAdminMutationMiddleware broadcasts live Platform Control Plane invalidation events on mutations.
+func (h *Handler) RealtimeAdminMutationMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		err := c.Next()
+		if err != nil || h.hub == nil || c.Response().StatusCode() >= 400 {
+			return err
+		}
+		method := c.Method()
+		if method != fiber.MethodPost && method != fiber.MethodPut && method != fiber.MethodPatch && method != fiber.MethodDelete {
+			return nil
+		}
+		path := c.Path()
+		if strings.HasSuffix(path, "/refresh") || strings.HasSuffix(path, "/logout") {
+			return nil
+		}
+		h.hub.BroadcastAdmin("ADMIN_SYNC", map[string]any{
+			"path":   path,
+			"method": method,
+			"ts":     time.Now().UTC().UnixMilli(),
+		})
+		return nil
 	}
 }
 
