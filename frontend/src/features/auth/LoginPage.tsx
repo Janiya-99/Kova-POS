@@ -72,11 +72,9 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
   const { colorMode, toggleColorMode } = useThemeStore();
   const { language, setLanguage, t } = useT();
 
-  // Workspace companies catalog & selected slug
-  const [companies, setCompanies] = React.useState<DirectoryCompanyItem[]>([]);
-  const [selectedSlug, setSelectedSlug] = React.useState<string>(
-    cleanSlug || normalizeCompanySlug(publicBranding?.slug) || ''
-  );
+  // Workspace companies catalog & automatic email-matched company state
+  const [discoveredMatches, setDiscoveredMatches] = React.useState<DirectoryCompanyItem[]>([]);
+  const [selectedSlug, setSelectedSlug] = React.useState<string>(cleanSlug || '');
 
   // Company branding state
   const [brandingLoading, setBrandingLoading] = React.useState(false);
@@ -146,38 +144,61 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
 
   // Keep selectedSlug synced when URL explicitly changes (/c/:slug/login)
   React.useEffect(() => {
+    setSelectedSlug(cleanSlug || '');
     if (cleanSlug) {
-      setSelectedSlug(cleanSlug);
+      setDiscoveredMatches([]);
     }
   }, [cleanSlug]);
 
-  // Fetch active workspaces cleanly on /login so the primary workspace auto-resolves without blocking UI
+  // Automatically resolve the staff member's company from their entered email on general /login
   React.useEffect(() => {
+    if (cleanSlug) return;
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@') || cleanEmail.split('@')[1]?.length < 2) {
+      setDiscoveredMatches([]);
+      setSelectedSlug('');
+      return;
+    }
+
     let active = true;
-    fetch('/api/v1/auth/companies')
-      .then((res) => (res.ok ? res.json() : { companies: [] }))
-      .then((data: { companies?: DirectoryCompanyItem[] }) => {
-        if (!active) return;
-        const list = data.companies || [];
-        setCompanies(list);
-        if (!cleanSlug && list.length > 0) {
-          setSelectedSlug((prev) => {
-            if (prev && list.some((c) => normalizeCompanySlug(c.slug) === prev)) {
-              return prev;
-            }
-            return normalizeCompanySlug(list[0].slug);
-          });
-        }
-      })
-      .catch(() => {
-        if (active) setCompanies([]);
-      });
+    const timer = window.setTimeout(() => {
+      fetch(`/api/v1/auth/discover?email=${encodeURIComponent(cleanEmail)}`)
+        .then((res) => (res.ok ? res.json() : { matched: false }))
+        .then((data: { matched?: boolean; companies?: DirectoryCompanyItem[]; company?: DirectoryCompanyItem }) => {
+          if (!active) return;
+          if (!data.matched) {
+            setDiscoveredMatches([]);
+            setSelectedSlug('');
+            return;
+          }
+          const matches = data.companies && data.companies.length > 0 ? data.companies : data.company ? [data.company] : [];
+          setDiscoveredMatches(matches);
+          if (matches.length === 1) {
+            setSelectedSlug(normalizeCompanySlug(matches[0].slug));
+          } else if (matches.length > 1) {
+            setSelectedSlug((prev) =>
+              prev && matches.some((m) => normalizeCompanySlug(m.slug) === prev)
+                ? prev
+                : normalizeCompanySlug(matches[0].slug)
+            );
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setDiscoveredMatches([]);
+            setSelectedSlug('');
+          }
+        });
+    }, 220);
+
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
-  }, [cleanSlug]);
+  }, [cleanSlug, email]);
 
   const targetSlug = cleanSlug || selectedSlug;
+  const submitSlug = cleanSlug || (discoveredMatches.length > 1 ? selectedSlug : '');
 
   // Load workspace branding smoothly whenever targetSlug resolves
   React.useEffect(() => {
@@ -234,7 +255,7 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
         body: JSON.stringify({
           email: email.trim(),
           password,
-          ...(targetSlug ? { company_slug: targetSlug } : {}),
+          ...(submitSlug ? { company_slug: submitSlug } : {}),
         }),
       });
       setSession(res);
@@ -290,7 +311,7 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
         method: 'POST',
         body: JSON.stringify({
           email: cleanEmail,
-          ...(targetSlug ? { company_slug: targetSlug } : {}),
+          ...(submitSlug ? { company_slug: submitSlug } : {}),
         }),
       });
       setResetEmailSent(true);
@@ -345,7 +366,7 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
       await apiFetch('/api/v1/auth/reset-password', {
         method: 'POST',
         body: JSON.stringify({
-          ...(targetSlug ? { company_slug: targetSlug } : {}),
+          ...(submitSlug ? { company_slug: submitSlug } : {}),
           mode: resetMode,
           email: resetEmail.trim(),
           email_code: resetEmailCode.trim(),
@@ -398,10 +419,14 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
     );
   }
 
-  const showWorkspaceSelect = !cleanSlug && companies.length > 1;
+  const showWorkspaceSelect = !cleanSlug && discoveredMatches.length > 1;
+  const activeMatchedCompany =
+    !cleanSlug && discoveredMatches.length === 1 ? discoveredMatches[0] : null;
 
   const brandDisplayName =
-    (cleanSlug ? publicBranding?.trade_name || publicBranding?.name : '') || 'Kova POS';
+    (cleanSlug
+      ? publicBranding?.trade_name || publicBranding?.name
+      : activeMatchedCompany?.trade_name || activeMatchedCompany?.name) || 'Kova POS';
 
   return (
     <>
@@ -409,7 +434,13 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
         colorMode={colorMode}
         testId="company-login-page"
         brandTitle={brandDisplayName}
-        brandSubtitle={cleanSlug ? `/c/${cleanSlug}` : 'All-Terrain POS & ERP'}
+        brandSubtitle={
+          cleanSlug
+            ? `/c/${cleanSlug}`
+            : activeMatchedCompany
+              ? `/c/${normalizeCompanySlug(activeMatchedCompany.slug)}`
+              : 'All-Terrain POS & ERP'
+        }
         showcaseBadge="Counter Ready"
         showcaseHeadline="Effortless at the counter. Powerful behind the scenes."
         showcaseDescription="Lightning-fast checkout, offline edge resilience, multi-branch stock intelligence, and real-time double-entry accounting across cafes, retail, and hardware stores."
@@ -466,7 +497,11 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
         formHeaderEyebrow={
           <>
             <Store className="h-3.5 w-3.5" />
-            <span>{cleanSlug ? `Portal · ${brandDisplayName}` : 'Staff Terminal Access'}</span>
+            <span>
+              {cleanSlug || activeMatchedCompany
+                ? `Portal · ${brandDisplayName}`
+                : 'Staff Terminal Access'}
+            </span>
           </>
         }
         formHeaderBadge="Encrypted Session"
@@ -507,7 +542,7 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
                   <SelectValue placeholder="Select workspace" />
                 </SelectTrigger>
                 <SelectContent>
-                  {companies.map((comp) => (
+                  {discoveredMatches.map((comp) => (
                     <SelectItem key={comp.id} value={normalizeCompanySlug(comp.slug)}>
                       {comp.trade_name || comp.name}
                     </SelectItem>
