@@ -1,3 +1,4 @@
+import { notifyLocalMutation } from '@/lib/realtime';
 import { useAuthStore } from '@/store/authStore';
 import { usePlatformAdminStore } from '@/store/platformAdminStore';
 
@@ -89,7 +90,12 @@ export async function apiFetch<T>(
     useAuthStore.getState().forceLocalLogout();
     throw new ApiError(401, 'Session expired');
   }
-  return parseApiResponse<T>(res);
+  const data = await parseApiResponse<T>(res);
+  const method = (options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    notifyLocalMutation(path);
+  }
+  return data;
 }
 
 export async function adminApiFetch<T>(
@@ -109,6 +115,11 @@ export async function adminApiFetch<T>(
     usePlatformAdminStore.getState().forceLocalLogout();
     throw new ApiError(401, 'Platform admin session expired');
   }
-  return parseApiResponse<T>(res);
+  const data = await parseApiResponse<T>(res);
+  const method = (options.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') {
+    notifyLocalMutation(path);
+  }
+  return data;
 }
 

@@ -1,8 +1,10 @@
 import * as React from 'react';
-import { Building2, LogOut } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Building2, LogOut, Radio } from 'lucide-react';
 import { KovaMark } from '@/components/brand/KovaLogo';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { invalidateQueriesForRealtimeEvent, useRealtimeStore } from '@/lib/realtime';
 import { usePlatformAdminStore } from '@/store/platformAdminStore';
 import { AdminLoginPage } from './AdminLoginPage';
 import { AdminPortalPage } from './AdminPortalPage';
@@ -13,16 +15,111 @@ interface AdminPortalAppProps {
 
 /**
  * Completely isolated Platform Admin Portal entrypoint (`/admin` and `/admin/login`).
- * Zero ERP sidebar (`FloatingSidebar`), zero tenant switching, and separate JWT persistence.
+ * Connects a real-time `/ws/admin` socket for live multi-tenant audit, company, and session telemetry.
  */
 export function AdminPortalApp({ onNavigatePath }: AdminPortalAppProps) {
   const { token, admin, logout } = usePlatformAdminStore();
+  const queryClient = useQueryClient();
+  const { adminWsStatus, setAdminWsStatus, recordSync } = useRealtimeStore();
 
   React.useEffect(() => {
     if (token && admin) {
       document.title = 'Kova POS — Master Control Plane';
     }
   }, [token, admin]);
+
+  React.useEffect(() => {
+    if (!token) {
+      setAdminWsStatus('offline');
+      return;
+    }
+
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let pingTimer: number | null = null;
+    let attempt = 0;
+    let closedByCleanup = false;
+
+    const clearTimers = () => {
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (pingTimer) {
+        window.clearInterval(pingTimer);
+        pingTimer = null;
+      }
+    };
+
+    const connect = () => {
+      if (closedByCleanup) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setAdminWsStatus('offline');
+        return;
+      }
+      clearTimers();
+      setAdminWsStatus(attempt > 0 ? 'reconnecting' : 'connecting');
+
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${window.location.host}/ws/admin?token=${encodeURIComponent(token)}`);
+
+      ws.onopen = () => {
+        attempt = 0;
+        setAdminWsStatus('live');
+        recordSync('ADMIN_CONNECTED');
+        pingTimer = window.setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 20_000);
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data);
+          if (!msg?.type) return;
+          if (msg.type === 'PING' || msg.type === 'PONG' || msg.type === 'CONNECTED') {
+            setAdminWsStatus('live');
+            recordSync(msg.type);
+            return;
+          }
+          invalidateQueriesForRealtimeEvent(queryClient, msg.type, msg.payload);
+        } catch {
+          // Ignore malformed keepalive frames
+        }
+      };
+
+      ws.onclose = () => {
+        clearTimers();
+        if (closedByCleanup) return;
+        attempt += 1;
+        setAdminWsStatus('reconnecting');
+        const delayMs = Math.min(15_000, 1000 * Math.pow(2, Math.min(attempt - 1, 4)));
+        reconnectTimer = window.setTimeout(connect, delayMs);
+      };
+    };
+
+    const handleVisibleOrOnline = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        attempt = 0;
+        connect();
+      } else if (ws.readyState === WebSocket.OPEN) {
+        void invalidateQueriesForRealtimeEvent(queryClient, 'ADMIN_SYNC');
+      }
+    };
+
+    connect();
+    window.addEventListener('online', handleVisibleOrOnline);
+    document.addEventListener('visibilitychange', handleVisibleOrOnline);
+    return () => {
+      closedByCleanup = true;
+      clearTimers();
+      window.removeEventListener('online', handleVisibleOrOnline);
+      document.removeEventListener('visibilitychange', handleVisibleOrOnline);
+      ws?.close();
+    };
+  }, [token, queryClient, setAdminWsStatus, recordSync]);
 
   if (!token || !admin) {
     return <AdminLoginPage onNavigatePath={onNavigatePath} />;
@@ -46,6 +143,18 @@ export function AdminPortalApp({ onNavigatePath }: AdminPortalAppProps) {
                 </h1>
                 <Badge variant="lavender" className="hidden sm:inline-flex text-[10px]">
                   Master DB Scope
+                </Badge>
+                <Badge
+                  variant={adminWsStatus === 'live' ? 'positive' : 'outline'}
+                  className="hidden sm:inline-flex items-center gap-1.5 text-[10px]"
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      adminWsStatus === 'live' ? 'bg-[#22C55E] animate-pulse' : 'bg-ink-muted'
+                    }`}
+                  />
+                  <Radio className="h-2.5 w-2.5" />
+                  <span>{adminWsStatus === 'live' ? 'Live Telemetry' : 'Syncing...'}</span>
                 </Badge>
               </div>
               <p className="truncate text-[11px] text-ink-muted">

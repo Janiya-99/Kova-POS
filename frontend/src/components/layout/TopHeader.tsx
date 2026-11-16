@@ -46,6 +46,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
 import { SessionsSecurityTab } from '@/features/settings/SessionsSecurityTab';
+import { KovaMark } from '@/components/brand/KovaLogo';
 import {
   Command,
   CommandEmpty,
@@ -56,6 +57,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { formatDisplayLabel } from '@/lib/formatLabel';
 import { isMultiBranchRole } from '@/lib/branchAccess';
+import { useRealtimeStore } from '@/lib/realtime';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
 import { usePOSStore } from '@/store/posStore';
 import { useThemeStore } from '@/store/themeStore';
@@ -108,17 +110,11 @@ export function TopHeader({
     logout,
   } = useAuthStore();
   const { pendingOutboxCount } = usePOSStore();
+  const { wsStatus, lastSyncedAt } = useRealtimeStore();
   const { colorMode, toggleColorMode } = useThemeStore();
   const { language, setLanguage, t } = useT();
   const tradeName = getDisplayTradeName(context, publicBranding);
   const logoLightUrl = context?.logo_light_url || publicBranding?.logo_light_url || '';
-  const primaryColorHex = context?.primary_color_hex || publicBranding?.primary_color_hex || '#877FC1';
-  const brandInitials = tradeName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase())
-    .join('') || 'RW';
   const activeLanguageMeta =
     SUPPORTED_LANGUAGES.find((l) => l.code === language) || SUPPORTED_LANGUAGES[0];
   const [searchOpen, setSearchOpen] = React.useState(false);
@@ -259,25 +255,21 @@ export function TopHeader({
         {/* Top Row: Brand Identity + Screen Title + Status Badge & Language/Theme/Search/Alerts/Profile */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex items-center gap-3">
-            <div
-              className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--theme-radius-control)] border border-border-theme overflow-hidden shadow-xs"
-              style={{
-                backgroundColor: logoLightUrl ? 'rgba(255,255,255,0.96)' : primaryColorHex,
-              }}
-            >
-              {logoLightUrl ? (
+            {logoLightUrl ? (
+              <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--theme-radius-control)] border border-border-theme bg-white/95 overflow-hidden shadow-xs">
                 <img
                   src={logoLightUrl}
                   alt={tradeName}
                   data-testid="header-brand-logo"
                   className="h-7 w-7 object-contain"
                 />
-              ) : (
-                <span className="text-[11px] font-extrabold text-white tracking-tight">
-                  {brandInitials}
-                </span>
-              )}
-            </div>
+              </div>
+            ) : (
+              <KovaMark
+                data-testid="header-brand-logo"
+                className="hidden sm:block h-9 w-9 rounded-[var(--theme-radius-control)]"
+              />
+            )}
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-[15px] sm:text-[16px] font-bold tracking-[-0.015em] text-ink leading-tight">
@@ -290,13 +282,29 @@ export function TopHeader({
                   {tradeName}
                 </span>
                 <Badge
-                  variant={online ? 'positive' : 'negative'}
-                  className="text-[10.5px] font-semibold"
+                  variant={online ? (wsStatus === 'live' ? 'positive' : 'outline') : 'negative'}
+                  title={
+                    lastSyncedAt
+                      ? `Real-time sync (${wsStatus}) · Last update ${new Date(lastSyncedAt).toLocaleTimeString()}`
+                      : `Connection status: ${wsStatus}`
+                  }
+                  className="text-[10.5px] font-semibold gap-1.5"
                 >
                   {online ? (
                     <>
-                      <Wifi className="h-3 w-3" />
-                      <span>{t.common.synced} • {pendingOutboxCount} {t.common.pending}</span>
+                      {wsStatus === 'live' ? (
+                        <span className="h-1.5 w-1.5 rounded-full bg-[#22C55E] animate-pulse" />
+                      ) : (
+                        <Wifi className="h-3 w-3" />
+                      )}
+                      <span>
+                        {wsStatus === 'live'
+                          ? `Live • ${t.common.synced}`
+                          : wsStatus === 'reconnecting'
+                            ? 'Reconnecting...'
+                            : t.common.synced}
+                        {pendingOutboxCount > 0 ? ` • ${pendingOutboxCount} ${t.common.pending}` : ''}
+                      </span>
                     </>
                   ) : (
                     <>

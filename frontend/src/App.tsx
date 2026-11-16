@@ -17,6 +17,7 @@ import { PrintStudioPage } from '@/features/print-studio/PrintStudioPage';
 import { SettingsInheritancePage } from '@/features/settings/SettingsInheritancePage';
 import { AdminPortalApp } from '@/features/admin/AdminPortalApp';
 import { dexieDB, flushSyncOutbox } from '@/lib/dexie-db';
+import { invalidateQueriesForRealtimeEvent, useRealtimeStore } from '@/lib/realtime';
 import { syncPrintTemplatesCache } from '@/features/print-studio/engine/offlinePrintCache';
 import type { PrintTemplateRecord } from '@/features/print-studio/types';
 import { apiFetch } from '@/lib/api';
@@ -263,11 +264,7 @@ function TenantWorkspaceApp({
             },
             ...prev.slice(0, 7),
           ]);
-          queryClient.invalidateQueries({ queryKey: ['overview'] });
-          queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
-          queryClient.invalidateQueries({ queryKey: ['inventory'] });
-          queryClient.invalidateQueries({ queryKey: ['reports'] });
-          queryClient.invalidateQueries({ queryKey: ['accounting'] });
+          invalidateQueriesForRealtimeEvent(queryClient, 'SALE_COMPLETED', { source: 'outbox_flush' });
         });
         if (synced > 0) {
           const remaining = await dexieDB.sync_outbox
@@ -301,33 +298,68 @@ function TenantWorkspaceApp({
     return () => window.clearInterval(interval);
   }, [token]);
 
-  // Real-time WebSocket tenant updates
+  // Real-time WebSocket tenant updates with keepalive, exponential reconnect & zero-refresh live cache sync
   React.useEffect(() => {
-    if (!token) return;
+    if (!token) {
+      useRealtimeStore.getState().setWsStatus('offline');
+      return;
+    }
+
     let ws: WebSocket | null = null;
     let reconnectTimer: number | null = null;
+    let pingTimer: number | null = null;
+    let attempt = 0;
     let closedByCleanup = false;
+    const { setWsStatus, recordSync } = useRealtimeStore.getState();
+
+    const clearTimers = () => {
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (pingTimer) {
+        window.clearInterval(pingTimer);
+        pingTimer = null;
+      }
+    };
 
     const connect = () => {
+      if (closedByCleanup) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setWsStatus('offline');
+        return;
+      }
+      clearTimers();
+      setWsStatus(attempt > 0 ? 'reconnecting' : 'connecting');
+
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${proto}//${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+
+      ws.onopen = () => {
+        attempt = 0;
+        setWsStatus('live');
+        recordSync('CONNECTED');
+        pingTimer = window.setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 20_000);
+      };
 
       ws.onmessage = (evt) => {
         try {
           const msg = JSON.parse(evt.data);
+          if (!msg?.type) return;
+
+          if (msg.type === 'PING' || msg.type === 'PONG' || msg.type === 'CONNECTED') {
+            setWsStatus('live');
+            recordSync(msg.type);
+            return;
+          }
+
+          invalidateQueriesForRealtimeEvent(queryClient, msg.type, msg.payload);
 
           if (msg.type === 'SETTINGS_UPDATED') {
-            queryClient.invalidateQueries({ queryKey: ['settings-resolved'] });
-            queryClient.invalidateQueries({ queryKey: ['company-settings'] });
-            queryClient.invalidateQueries({ queryKey: ['public-branding'] });
-            queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
-            queryClient.invalidateQueries({ queryKey: ['overview'] });
-            queryClient.invalidateQueries({ queryKey: ['inventory'] });
-            queryClient.invalidateQueries({ queryKey: ['reports'] });
-            queryClient.invalidateQueries({ queryKey: ['accounting'] });
-            queryClient.invalidateQueries({ queryKey: ['products'] });
-            queryClient.invalidateQueries({ queryKey: ['categories'] });
-
             if (msg.payload?.resolved_map && typeof msg.payload.resolved_map === 'object') {
               setResolvedSettings(msg.payload.resolved_map as Record<string, string>);
             }
@@ -375,14 +407,12 @@ function TenantWorkspaceApp({
               updateBusinessContext({ default_language: nextLang }, { forceLanguage: true });
               useI18nStore.getState().resetToTenantDefault(nextLang);
             }
-            toast.info(
-              `Settings updated: ${msg.payload?.setting_key || 'config'} (${msg.payload?.scope_level || 'SCOPE'})`
-            );
-          } else if (msg.type === 'HELD_BILL_SYNC') {
-            queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
-            queryClient.invalidateQueries({ queryKey: ['overview'] });
+            if (msg.payload?.setting_key) {
+              toast.info(
+                `Settings synced: ${msg.payload.setting_key} (${msg.payload.scope_level || 'SCOPE'})`
+              );
+            }
           } else if (msg.type === 'PRINT_TEMPLATE_UPDATED') {
-            queryClient.invalidateQueries({ queryKey: ['print-templates'] });
             toast.info('Print Studio template synced across terminals');
           } else if (msg.type === 'SESSION_REVOKED') {
             const revokedSessionID = msg.payload?.session_id;
@@ -396,19 +426,11 @@ function TenantWorkspaceApp({
             if (matchesThisSession) {
               toast.error('Your session was terminated on the server. Please sign in again.');
               authState.forceLocalLogout();
-            } else {
-              queryClient.invalidateQueries({ queryKey: ['security-overview'] });
             }
-          } else if (msg.type === 'LOW_STOCK_ALERT' || msg.type === 'NOTIFICATION_CREATED') {
-            queryClient.invalidateQueries({ queryKey: ['notifications'] });
-            queryClient.invalidateQueries({ queryKey: ['inventory'] });
-            queryClient.invalidateQueries({ queryKey: ['reports'] });
-            queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
-            if (msg.type === 'LOW_STOCK_ALERT' && msg.payload?.po_number) {
-              toast.warning(
-                `Low Stock (${msg.payload.product_name || msg.payload.sku}): Auto-PO ${msg.payload.po_number} & Invoice ${msg.payload.invoice_number} created.`
-              );
-            }
+          } else if (msg.type === 'LOW_STOCK_ALERT' && msg.payload?.po_number) {
+            toast.warning(
+              `Low Stock (${msg.payload.product_name || msg.payload.sku}): Auto-PO ${msg.payload.po_number} & Invoice ${msg.payload.invoice_number} created.`
+            );
           }
         } catch {
           // Ignore malformed heartbeat frames
@@ -416,16 +438,42 @@ function TenantWorkspaceApp({
       };
 
       ws.onclose = () => {
-        if (!closedByCleanup) {
-          reconnectTimer = window.setTimeout(connect, 4000);
+        clearTimers();
+        if (closedByCleanup) return;
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          setWsStatus('offline');
+          return;
         }
+        attempt += 1;
+        setWsStatus('reconnecting');
+        const delayMs = Math.min(15_000, 1000 * Math.pow(2, Math.min(attempt - 1, 4)));
+        reconnectTimer = window.setTimeout(connect, delayMs);
       };
     };
 
+    const handleOnlineOrVisible = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (!navigator.onLine) {
+        setWsStatus('offline');
+        return;
+      }
+      if (!ws || ws.readyState === WebSocket.CLOSED) {
+        attempt = 0;
+        connect();
+      } else if (ws.readyState === WebSocket.OPEN) {
+        void queryClient.invalidateQueries({ refetchType: 'active' });
+      }
+    };
+
     connect();
+    window.addEventListener('online', handleOnlineOrVisible);
+    document.addEventListener('visibilitychange', handleOnlineOrVisible);
+
     return () => {
       closedByCleanup = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearTimers();
+      window.removeEventListener('online', handleOnlineOrVisible);
+      document.removeEventListener('visibilitychange', handleOnlineOrVisible);
       ws?.close();
     };
   }, [token, queryClient, updateBusinessContext, setResolvedSettings]);

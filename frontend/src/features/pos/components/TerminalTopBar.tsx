@@ -11,6 +11,8 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { KovaMark } from '@/components/brand/KovaLogo';
+import { useRealtimeStore } from '@/lib/realtime';
 import { formatDisplayLabel } from '@/lib/formatLabel';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
 import type { POSCapabilities } from './capabilities';
@@ -44,6 +46,7 @@ export function TerminalTopBar({
   onOpenSidebar,
 }: TerminalTopBarProps) {
   const { context, publicBranding, terminals } = useAuthStore();
+  const { wsStatus, lastSyncedAt } = useRealtimeStore();
   const [now, setNow] = React.useState<Date>(() => new Date());
   const activeTerminalName =
     terminals.find((term) => term.id === context?.terminal_id)?.name || 'Terminal #01';
@@ -62,15 +65,6 @@ export function TerminalTopBar({
     context?.logo_dark_url ||
     context?.logo_sidebar_url ||
     '';
-  const accentColor =
-    context?.primary_color_hex || publicBranding?.primary_color_hex || '#877FC1';
-  const initials =
-    tradeName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((s) => s[0]?.toUpperCase())
-      .join('') || 'ZP';
 
   const dateText = now.toLocaleDateString(undefined, {
     weekday: 'short',
@@ -110,12 +104,7 @@ export function TerminalTopBar({
               className="h-8 w-8 shrink-0 rounded-[9px] border border-border-theme object-contain bg-white p-0.5"
             />
           ) : (
-            <span
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] text-[11px] font-extrabold text-white shadow-xs"
-              style={{ backgroundColor: accentColor }}
-            >
-              {initials}
-            </span>
+            <KovaMark className="h-8 w-8 rounded-[9px]" />
           )}
 
           <div className="min-w-0">
@@ -160,15 +149,28 @@ export function TerminalTopBar({
         </span>
 
         <span
-          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-semibold ${
+          title={
+            lastSyncedAt
+              ? `Real-time sync (${wsStatus}) · Last update ${new Date(lastSyncedAt).toLocaleTimeString()}`
+              : `Connection status: ${wsStatus}`
+          }
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-semibold ${
             isOnline
               ? 'border-[#22C55E]/30 bg-[#22C55E]/10 text-[#15803D]'
               : 'border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#B45309]'
           }`}
         >
-          {isOnline ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+          {isOnline ? (
+            wsStatus === 'live' ? (
+              <span className="h-2 w-2 rounded-full bg-[#22C55E] animate-pulse" />
+            ) : (
+              <Wifi className="h-3 w-3" />
+            )
+          ) : (
+            <WifiOff className="h-3 w-3" />
+          )}
           <span>
-            {isOnline ? 'Live Sync' : 'Offline Edge'}
+            {isOnline ? (wsStatus === 'live' ? 'Live' : 'Syncing...') : 'Offline Edge'}
             {pendingOutboxCount > 0 ? ` (${pendingOutboxCount})` : ''}
           </span>
         </span>
