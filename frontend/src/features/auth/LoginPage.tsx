@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Building2,
+  CheckCircle2,
   Eye,
   EyeOff,
   Globe,
@@ -10,6 +11,7 @@ import {
   Lock,
   Mail,
   Moon,
+  Send,
   Sun,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -86,10 +88,15 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
 
   // Password Reset Dialog state
   const [resetOpen, setResetOpen] = React.useState(false);
-  const [resetMode, setResetMode] = React.useState<'current_password' | 'supervisor_pin'>(
-    'current_password'
-  );
+  const [resetMode, setResetMode] = React.useState<
+    'email_code' | 'current_password' | 'supervisor_pin'
+  >('email_code');
   const [resetEmail, setResetEmail] = React.useState('');
+  const [resetEmailCode, setResetEmailCode] = React.useState('');
+  const [resetToken, setResetToken] = React.useState('');
+  const [resetEmailSent, setResetEmailSent] = React.useState(false);
+  const [sendingResetEmail, setSendingResetEmail] = React.useState(false);
+  const [resetEmailCooldown, setResetEmailCooldown] = React.useState(0);
   const [resetCurrentPw, setResetCurrentPw] = React.useState('');
   const [showResetCurrentPw, setShowResetCurrentPw] = React.useState(false);
   const [resetSupervisorEmail, setResetSupervisorEmail] = React.useState('');
@@ -107,6 +114,32 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [cooldownSec]);
+
+  React.useEffect(() => {
+    if (resetEmailCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setResetEmailCooldown((prev) => (prev > 1 ? prev - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [resetEmailCooldown]);
+
+  // Auto-open reset password modal if opened from a direct email reset link (?reset_token=...&email=...)
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const linkToken = params.get('reset_token')?.trim() || '';
+    const linkEmail = params.get('email')?.trim() || '';
+    if (linkToken) {
+      setResetMode('email_code');
+      setResetToken(linkToken);
+      if (linkEmail) {
+        setResetEmail(linkEmail);
+        setEmail(linkEmail);
+      }
+      setResetEmailSent(true);
+      setResetOpen(true);
+    }
+  }, []);
 
   // Keep selectedSlug synced when URL explicitly changes (/c/:slug/login)
   React.useEffect(() => {
@@ -216,8 +249,22 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
     }
   };
 
+  const clearResetQueryParams = () => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('reset_token') || url.searchParams.has('email')) {
+      url.searchParams.delete('reset_token');
+      url.searchParams.delete('email');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    }
+  };
+
   const openResetModal = () => {
+    setResetMode('email_code');
     setResetEmail(email.trim());
+    setResetEmailCode('');
+    setResetToken('');
+    setResetEmailSent(false);
     setResetCurrentPw('');
     setResetSupervisorEmail('');
     setResetSupervisorPin('');
@@ -227,6 +274,36 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
     setShowResetNewPw(false);
     setShowResetPin(false);
     setResetOpen(true);
+  };
+
+  const handleSendResetEmail = async () => {
+    if (resetEmailCooldown > 0) return;
+    const cleanEmail = resetEmail.trim();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      toast.error('Please enter your staff account email first');
+      return;
+    }
+    setSendingResetEmail(true);
+    try {
+      const res = await apiFetch<{ message?: string }>('/api/v1/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: cleanEmail,
+          ...(targetSlug ? { company_slug: targetSlug } : {}),
+        }),
+      });
+      setResetEmailSent(true);
+      setResetToken('');
+      setResetEmailCooldown(30);
+      toast.success(res.message || 'Verification code and reset link sent to your email.');
+    } catch (err: any) {
+      if (err instanceof ApiError && err.status === 429) {
+        setResetEmailCooldown(err.retryAfterSeconds || 60);
+      }
+      toast.error(err.message || 'Failed to send reset verification email');
+    } finally {
+      setSendingResetEmail(false);
+    }
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -243,7 +320,12 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
       toast.error('New password and confirmation do not match');
       return;
     }
-    if (resetMode === 'supervisor_pin') {
+    if (resetMode === 'email_code') {
+      if (!resetToken && resetEmailCode.trim().length !== 6) {
+        toast.error('Enter the 6-digit verification code from your email');
+        return;
+      }
+    } else if (resetMode === 'supervisor_pin') {
       if (!resetSupervisorEmail.trim() || !resetSupervisorEmail.includes('@')) {
         toast.error('Authorizing manager email is required');
         return;
@@ -265,6 +347,8 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
           ...(targetSlug ? { company_slug: targetSlug } : {}),
           mode: resetMode,
           email: resetEmail.trim(),
+          email_code: resetEmailCode.trim(),
+          reset_token: resetToken.trim(),
           current_password: resetCurrentPw,
           supervisor_email: resetSupervisorEmail.trim(),
           supervisor_pin: resetSupervisorPin,
@@ -274,6 +358,7 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
       toast.success('Password updated successfully. Sign in with your new password.');
       setEmail(resetEmail.trim());
       setPassword('');
+      clearResetQueryParams();
       setResetOpen(false);
     } catch (err: any) {
       toast.error(err.message || 'Password reset failed');
@@ -521,20 +606,38 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
       </footer>
 
       {/* Password Reset Verification Dialog */}
-      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-        <DialogContent className="sm:max-w-[460px]" data-testid="reset-password-dialog">
+      <Dialog
+        open={resetOpen}
+        onOpenChange={(open) => {
+          setResetOpen(open);
+          if (!open) clearResetQueryParams();
+        }}
+      >
+        <DialogContent className="sm:max-w-[490px]" data-testid="reset-password-dialog">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <KeyRound className="h-4 w-4 text-accent" />
               Reset Account Password
             </DialogTitle>
             <DialogDescription>
-              Verify with your current password or authorize via an active manager&apos;s 6-digit supervisor PIN.
+              Receive a verification code by email, verify your current password, or use an active manager&apos;s 6-digit supervisor PIN.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleResetPassword} className="space-y-3.5 pt-1">
-            <div className="grid grid-cols-2 gap-1.5 rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted p-1">
+            <div className="grid grid-cols-3 gap-1.5 rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted p-1">
+              <button
+                type="button"
+                onClick={() => setResetMode('email_code')}
+                data-testid="reset-mode-email-btn"
+                className={`rounded-[var(--theme-radius-control)] py-1.5 text-[11px] font-bold transition cursor-pointer ${
+                  resetMode === 'email_code'
+                    ? 'bg-accent text-accent-fg shadow-xs'
+                    : 'text-ink-muted hover:text-ink'
+                }`}
+              >
+                Email Code
+              </button>
               <button
                 type="button"
                 onClick={() => setResetMode('current_password')}
@@ -557,23 +660,89 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
                     : 'text-ink-muted hover:text-ink'
                 }`}
               >
-                Manager PIN Recovery
+                Manager PIN
               </button>
             </div>
 
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-ink">Account Email</label>
-              <Input
-                type="email"
-                value={resetEmail}
-                onChange={(e) => setResetEmail(e.target.value)}
-                placeholder="staff@company.com"
-                data-testid="reset-email-input"
-                required
-              />
+              <div className={resetMode === 'email_code' && !resetToken ? 'flex gap-2' : ''}>
+                <Input
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="staff@company.com"
+                  data-testid="reset-email-input"
+                  required
+                />
+                {resetMode === 'email_code' && !resetToken && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSendResetEmail}
+                    disabled={sendingResetEmail || resetEmailCooldown > 0}
+                    data-testid="reset-send-email-btn"
+                    className="shrink-0 gap-1.5 px-3 text-[11.5px] font-semibold"
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    {sendingResetEmail
+                      ? 'Sending...'
+                      : resetEmailCooldown > 0
+                        ? `Resend (${resetEmailCooldown}s)`
+                        : resetEmailSent
+                          ? 'Resend Code'
+                          : 'Send Code'}
+                  </Button>
+                )}
+              </div>
             </div>
 
-            {resetMode === 'current_password' ? (
+            {resetMode === 'email_code' ? (
+              <div className="space-y-2.5">
+                {resetToken ? (
+                  <div className="flex items-center justify-between gap-2 rounded-[var(--theme-radius-inner)] border border-[#10B981]/30 bg-[#10B981]/10 px-3 py-2 text-[11.5px] text-ink">
+                    <span className="inline-flex items-center gap-1.5 font-semibold">
+                      <CheckCircle2 className="h-4 w-4 text-[#10B981]" />
+                      Verified via direct email reset link
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setResetToken('')}
+                      className="text-[11px] font-semibold text-accent hover:underline cursor-pointer"
+                    >
+                      Use 6-digit code
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/50 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[11px] font-semibold text-ink">
+                        6-Digit Email Verification Code
+                      </label>
+                      {resetEmailSent && (
+                        <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-[#10B981]">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Code sent (15m TTL)
+                        </span>
+                      )}
+                    </div>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={resetEmailCode}
+                      onChange={(e) =>
+                        setResetEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                      }
+                      placeholder="Enter 6-digit code"
+                      className="font-mono text-center text-[15px] font-bold tracking-[0.3em] placeholder:font-sans placeholder:text-xs placeholder:font-normal placeholder:tracking-normal tabular-nums"
+                      data-testid="reset-email-code-input"
+                      required
+                    />
+                  </div>
+                )}
+              </div>
+            ) : resetMode === 'current_password' ? (
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold text-ink">Current Password</label>
                 <div className="relative">
@@ -673,7 +842,14 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => setResetOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  clearResetQueryParams();
+                  setResetOpen(false);
+                }}
+              >
                 Cancel
               </Button>
               <DynamicButton
