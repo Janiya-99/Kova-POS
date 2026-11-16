@@ -323,13 +323,13 @@ func (m *TenantManager) SyncTenantCompanyProfile(ctx context.Context, businessID
 		return err
 	}
 
+	if req.IndustryProfile != "" {
+		_, _ = usecase.EnsureIndustryDepartmentsAndDesignations(ctx, queries, businessID, req.IndustryProfile)
+	}
 	if settingsUC != nil {
 		if req.IndustryProfile != "" {
-			rawMode, _ := json.Marshal(req.IndustryProfile)
-			_ = settingsUC.UpsertOverrideQuiet(ctx, businessID, uuid.Nil, "pos.ui.layout_mode", "BUSINESS", &businessID, rawMode)
-			for k, enabled := range usecase.IndustryPresetFlags(req.IndustryProfile) {
-				bRaw, _ := json.Marshal(enabled)
-				_ = settingsUC.UpsertOverrideQuiet(ctx, businessID, uuid.Nil, k, "BUSINESS", &businessID, bRaw)
+			for k, val := range usecase.IndustryBusinessSettingValues(req.IndustryProfile) {
+				_ = settingsUC.UpsertOverrideQuiet(ctx, businessID, uuid.Nil, k, "BUSINESS", &businessID, val)
 			}
 		}
 		if normCurr := strings.ToUpper(strings.TrimSpace(req.BaseCurrency)); normCurr != "" {
@@ -475,10 +475,12 @@ func copyZonaRetailFromMaster(ctx context.Context, src, dst *pgxpool.Pool) error
 		{table: "terminals", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
 		{table: "departments", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
 		{table: "designations", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
-		{table: "roles", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
-		{table: "role_permissions", where: fmt.Sprintf("role_id IN (SELECT id FROM roles WHERE business_id = '%s'::UUID)", zonaRetailID)},
+		{table: "roles", where: fmt.Sprintf("(business_id IS NULL OR business_id = '%s'::UUID)", zonaRetailID)},
+		{table: "permissions", where: "TRUE"},
+		{table: "role_permissions", where: fmt.Sprintf("role_id IN (SELECT id FROM roles WHERE business_id IS NULL OR business_id = '%s'::UUID)", zonaRetailID)},
 		{table: "users", where: fmt.Sprintf("id IN (SELECT DISTINCT user_id FROM user_business_roles WHERE business_id = '%s'::UUID UNION SELECT '%s'::UUID) OR LOWER(email) = '%s'", zonaRetailID, legacyAdminUserID, legacyAdminEmail)},
 		{table: "user_business_roles", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
+		{table: "setting_definitions", where: "TRUE"},
 		{table: "scoped_settings", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
 		{table: "tax_groups", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},
 		{table: "tax_rules", where: fmt.Sprintf("business_id = '%s'::UUID", zonaRetailID)},

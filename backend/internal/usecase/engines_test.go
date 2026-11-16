@@ -211,6 +211,17 @@ func TestIndustryPresetFlagsAndNormalization(t *testing.T) {
 	if !stationery["pos.features.enable_bundles"] {
 		t.Fatalf("stationery preset must enable bundles")
 	}
+
+	for _, m := range modes {
+		bp := BlueprintForIndustry(m)
+		if bp.Mode != m || bp.DefaultBranchName == "" || bp.DefaultBranchCode == "" || len(bp.Departments) < 2 || len(bp.Designations) < 4 || len(bp.Categories) < 2 {
+			t.Fatalf("incomplete industry blueprint for mode %s: %+v", m, bp)
+		}
+		vals := IndustryBusinessSettingValues(m)
+		if len(vals) < 16 {
+			t.Fatalf("expected full setting blueprint for %s, got %d keys", m, len(vals))
+		}
+	}
 }
 
 func TestResolveApprovedUOMFactor(t *testing.T) {

@@ -711,20 +711,14 @@ func (c *CatalogCompanyUsecase) ApplyIndustryPreset(ctx context.Context, busines
 }
 
 func (c *CatalogCompanyUsecase) applyIndustryPresetQuiet(ctx context.Context, businessID, userID uuid.UUID, mode string) error {
-	if c.settings == nil {
-		return nil
-	}
-	rawMode, _ := json.Marshal(mode)
-	if err := c.settings.UpsertOverrideQuiet(ctx, businessID, userID, "pos.ui.layout_mode", "BUSINESS", &businessID, rawMode); err != nil {
-		return err
-	}
-	for k, enabled := range IndustryPresetFlags(mode) {
-		val := json.RawMessage(`false`)
-		if enabled {
-			val = json.RawMessage(`true`)
+	if c.settings != nil {
+		for k, val := range IndustryBusinessSettingValues(mode) {
+			if err := c.settings.UpsertOverrideQuiet(ctx, businessID, userID, k, "BUSINESS", &businessID, val); err != nil {
+				return err
+			}
 		}
-		_ = c.settings.UpsertOverrideQuiet(ctx, businessID, userID, k, "BUSINESS", &businessID, val)
 	}
+	_, _ = EnsureIndustryDepartmentsAndDesignations(ctx, c.queries, businessID, mode)
 	return nil
 }
 

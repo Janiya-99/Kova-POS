@@ -53,7 +53,7 @@ func TestIndustryPresetsAndStarterCategories(t *testing.T) {
 		if len(flags) == 0 {
 			t.Fatalf("expected preset flags for %q", industry)
 		}
-		cats := starterCategoriesForIndustry(industry)
+		cats := BlueprintForIndustry(industry).Categories
 		if len(cats) < 2 {
 			t.Fatalf("expected at least 2 starter categories for %q", industry)
 		}
