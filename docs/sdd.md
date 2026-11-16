@@ -1,25 +1,26 @@
-# Enterprise Multi-Business POS System Design Document (SDD)
+# KOVA POS — System Design Document (SDD)
 
-**Version:** 1.0.0  
-**Architecture Paradigm:** Multi-Tenant Clean / Hexagonal Architecture + Offline-First Edge POS  
-**Backend Stack:** Go (Golang 1.22+/1.23+, Fiber v2, `sqlc`, `pgx/v5`, `shopspring/decimal`, Redis 7.2, Asynq Distributed Worker Queue, WebSockets)  
-**Frontend Stack:** React 19 + TypeScript, Vite, Tailwind CSS v4, `shadcn/ui`, Zustand, TanStack Query v5, Dexie.js (IndexedDB Offline Engine)  
-**Database Engine:** PostgreSQL 16+ (Strictly 3NF Normalized Relational Schema with Multi-Tenant Isolation)  
-**Hardware Bridge:** WebUSB, WebSerial, ESC/POS Raw Byte Generator, RawBT (`58mm`, `76.2mm`, `80mm` Thermal Printers + Cash Drawer Kick)
+**Version:** 2.0.0  
+**Architecture Reference:** [`ARCHITECTURE.md`](../ARCHITECTURE.md) · [`README.md`](../README.md)  
+**Architecture Paradigm:** Multi-Tenant Clean / Hexagonal Architecture + Database-Per-Company Isolation + Offline-First Edge POS  
+**Backend Stack:** Go (`1.22` / Docker `1.23`), Fiber v2, `sqlc`, `pgx/v5`, `shopspring/decimal`, Redis `7.2`, Asynq Distributed Worker Queue, WebSockets (`/ws` & `/ws/admin`), `net/smtp` Mailer  
+**Frontend Stack:** React 19 + TypeScript, Vite, Tailwind CSS v4, `shadcn/ui`, Zustand, TanStack Query v5 (`keepPreviousData`), `BroadcastChannel`, Dexie.js (IndexedDB Offline Engine)  
+**Database Engine:** PostgreSQL 16+ (Master `enterprise_pos` Registry + Isolated `pos_tenant_<slug>` 3NF Databases)  
+**Hardware Bridge:** WebUSB, WebSerial, ESC/POS Raw Byte Generator, RawBT (`58mm`, `76.2mm`, `80mm` Thermal Printers + Cash Drawer Kick) + Vector A4 PDF (`jsPDF`)
 
 ---
 
 ## 1. System Architecture & Multi-Business Topology
 
-### 1.1 High-Level Multi-Tier Architecture
+### 1.1 Dual-Scope Multi-Tenant Database Isolation
 
-The platform supports **multiple independent businesses (Multi-Tenancy)** on a single deployment while strictly isolating legal entities, tax rules, warehouse stock batches, and double-entry accounting ledgers via `business_id`.
+The platform separates Platform Master Control (`enterprise_pos`, managed exclusively by `PlatformAdminMiddleware` using `PLATFORM_ADMIN` JWTs) from isolated tenant company databases (`pos_tenant_<slug>`, routed lazily per request by `TenantManager` with bounded pools up to `MaxConns = 10`). Every business-scoped table strictly enforces `business_id`.
 
 ### 1.2 The 6-Level Settings Inheritance Hierarchy
 
 Settings resolve dynamically from the broadest system default down to the individual product SKU. Lower scopes override higher scopes:
 
-$$\text{System Default} \rightarrow \text{Business (Global)} \rightarrow \text{Branch / Warehouse} \rightarrow \text{Terminal} \rightarrow \text{Category} \rightarrow \text{Product}$$
+`System Default` -> `Business (Global)` -> `Branch / Warehouse` -> `Terminal` -> `Category` -> `Product`
 
 | Scope Level | Resolution Priority | Core Parameters Controlled at This Scope |
 | :--- | :--- | :--- |
@@ -53,7 +54,8 @@ All business-scoped tables carry `business_id UUID NOT NULL REFERENCES businesse
 
 ### Mandatory Database Constraint Trigger
 `trg_verify_journal_balance` (`CONSTRAINT TRIGGER ... DEFERRABLE INITIALLY DEFERRED`) validates on commit that for every `journal_entry_id`:
-$$\sum \text{journal\_lines.debit} = \sum \text{journal\_lines.credit}$$
+
+`SUM(journal_lines.debit) = SUM(journal_lines.credit)`
 
 ---
 
@@ -84,17 +86,20 @@ $$\sum \text{journal\_lines.debit} = \sum \text{journal\_lines.credit}$$
 
 | Endpoint | Permission / Guard | Purpose |
 | :--- | :--- | :--- |
-| `POST /api/v1/auth/login` | Public | Authenticates staff, issues JWT with `business_id`, `branch_id`, `terminal_id`, `permissions[]` |
+| `POST /api/v1/auth/login` | Public | Authenticates staff, creates tracked session (`user_sessions`), issues JWT with `business_id`, `branch_id`, `terminal_id`, `permissions[]` |
+| `POST /api/v1/auth/forgot-password` | Public (`auth_recovery` rate limit) | Generates 6-digit OTP + reset token (`password_reset_tokens`) and dispatches SMTP reset email |
+| `POST /api/v1/auth/reset-password` | Public (`auth_recovery` rate limit) | Resets password via `email_code`, `email_token`, `current_password`, or `supervisor_pin` and revokes active sessions |
 | `POST /api/v1/auth/switch-context` | Authenticated | Switches active `branch_id` / `business_id` for authorized roles |
 | `POST /api/v1/auth/verify-pin` | Authenticated | Verifies 6-digit supervisor PIN and issues short-lived `X-Supervisor-Override-Token` |
 | `GET /api/v1/overview` | `analytics:view` | Executive Bento metrics (`Sales Analytics`, `Top sales by country`, `Last activity`, `Product sales`, KPIs) |
 | `GET /api/v1/pos/bootstrap` | `pos:view` | Catalog, FIFO batch stock, tax rules, customers, and resolved 6-level settings for Dexie offline cache |
-| `POST /api/v1/pos/checkout` | `pos:checkout` + `X-Idempotency-Key` | Atomic FIFO + Tax + GL checkout |
+| `POST /api/v1/pos/checkout` | `pos:checkout` + `X-Idempotency-Key` | Atomic FIFO + Tax + GL checkout (emits `SALE_COMPLETED`) |
 | `POST /api/v1/pos/invoices/:id/void` | `pos:void_bill` or Override Token | Reverses GL entries & restores inventory batch quantities |
 | `POST /api/v1/pos/invoices/:id/refund` | `pos:refund` or Override Token | Issues `REFUND` invoice (`status = 'REFUND'`), reverses revenue/tax/COGS GL lines |
 | `GET / POST /api/v1/pos/held-bills` | `pos:hold_bill` | Lists, creates, recalls, and voids suspended bills synced via WebSocket |
-| `GET / POST /api/v1/inventory/grns` | `inventory:grn` | Lists FIFO batches & suppliers, creates and approves GRNs with automatic GL posting |
+| `GET / POST /api/v1/inventory/grns` | `inventory:grn_create` | Lists FIFO batches & suppliers, creates and approves GRNs with automatic GL posting |
 | `GET / POST /api/v1/accounting/journals` | `accounting:view` / `accounting:lock_period` | Chart of Accounts, immutable journal drill-down, and Fiscal Period Lock |
 | `GET / PUT /api/v1/settings/resolved` | `settings:view` / `settings:manage` | 6-level inheritance explorer, override upsert/reset, RBAC role matrix |
-| `GET /ws` | JWT Query/Header | Broadcasts `SETTINGS_UPDATED`, `HELD_BILL_SYNC`, and `LOW_STOCK_ALERT` |
+| `GET /ws` | Tenant JWT Query | Real-time tenant event stream (`SALE_COMPLETED`, `SETTINGS_UPDATED`, `HELD_BILL_SYNC`, `LOW_STOCK_ALERT`, `SESSION_REVOKED`, etc.) |
+| `GET /ws/admin` | Platform Admin JWT Query | Real-time SuperAdmin telemetry stream (`ADMIN_SYNC` for companies, sessions & audit logs) |
 

@@ -1,8 +1,19 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/logos/03-kova-pos-dark-background.png" />
+    <img src="frontend/public/brand/logos/04-kova-pos-light-background.png" alt="KOVA POS Logo" width="440" />
+  </picture>
+</p>
+
 # KOVA POS
 
 > **Effortless at the counter. Powerful behind the scenes.**
 
 KOVA POS is a modern, cloud-native, offline-capable point-of-sale and double-entry accounting platform built with a **Go + Fiber v2 + PostgreSQL 16 + Redis 7.2** backend and a **React 19 + TypeScript + Vite + Dexie.js** frontend.
+
+- **Full Architecture Document (GitHub-Readable):** [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- **System Design Document (SDD):** [`docs/sdd.md`](docs/sdd.md)
+- **Setup & Environment Configuration:** [`#project-setup-guide`](#project-setup-guide) · [`.env.example`](.env.example)
 
 ---
 
@@ -33,23 +44,23 @@ KOVA POS follows a **Multi-Tenant Clean / Hexagonal Architecture** paired with *
 
 ```mermaid
 flowchart TB
-    subgraph Client["Edge Browser & Counter Terminal"]
-        UI["React 19 + TypeScript SPA (Tailwind v4, shadcn/ui, Zustand, TanStack Query)"]
-        EdgeDB["Dexie.js IndexedDB (Catalog, FIFO Batches, Tax Rules, UUIDv7 Outbox)"]
-        PrintBridge["ESC/POS Hardware Bridge (WebUSB, WebSerial, RawBT, A4 PDF)"]
-        UI <--> EdgeDB
+    subgraph Client["Edge Browser and Counter Terminal"]
+        UI["React 19 + TypeScript SPA - Tailwind v4, shadcn/ui, Zustand, React Query"]
+        EdgeDB["Dexie.js IndexedDB - Catalog, FIFO Batches, Tax Rules, UUIDv7 Outbox"]
+        PrintBridge["ESC/POS Hardware Bridge - WebUSB, WebSerial, RawBT, A4 PDF"]
+        UI --- EdgeDB
         UI --> PrintBridge
     end
 
-    Proxy["Nginx Reverse Proxy / Vite Dev Proxy (/api/* HTTP + /ws WebSocket)"]
-    Client -->|HTTPS / WSS| Proxy
+    Proxy["Nginx Reverse Proxy / Vite Dev Proxy - /api/* HTTP and /ws/* WebSocket"]
+    Client --> Proxy
 
-    subgraph API["Go Backend (Fiber v2 - port 8080)"]
-        MW["Middleware Pipeline (Rate Limiter, JWT Auth, Session Validator, RBAC + PIN Guard)"]
-        Router["TenantManager (Lazy Pool Router: Master DB vs pos_tenant_slug)"]
-        UseCases["Domain & Usecases (POS Checkout, FIFO, Tax, GL, 6-Level Settings, Print Studio)"]
-        Worker["Asynq Background Worker (Auto-PO Low-Stock Evaluator)"]
-        Hub["WebSocket Hub (/ws: HELD_BILL, SETTINGS, SESSION_REVOKED, LOW_STOCK)"]
+    subgraph API["Go Backend - Fiber v2 on Port 8080"]
+        MW["Middleware Pipeline - Rate Limiter, JWT Auth, Session Guard, RBAC + PIN"]
+        Router["TenantManager - Master DB vs Isolated pos_tenant_slug DB Pools"]
+        UseCases["Domain Usecases - POS, FIFO, Tax, GL, Settings, Print Studio, Mailer"]
+        Worker["Asynq Background Worker - Auto-PO Low-Stock Evaluator"]
+        Hub["WebSocket Hub - Tenant /ws and Admin /ws/admin"]
         MW --> Router --> UseCases
         UseCases --> Worker
         UseCases --> Hub
@@ -57,10 +68,10 @@ flowchart TB
 
     Proxy --> MW
 
-    subgraph Data["Data & Cache Layer"]
-        MasterDB[("PostgreSQL 16 Master DB (enterprise_pos: Platform Control Plane & Registry)")]
-        TenantDB[("PostgreSQL 16 Tenant DBs (pos_tenant_slug: 3NF Schema & Journal Trigger)")]
-        Redis[("Redis 7.2 AOF (Settings Cache, Lua Rate Limiter, Asynq Queue)")]
+    subgraph Data["Data and Cache Layer"]
+        MasterDB[(PostgreSQL 16 - enterprise_pos Master DB)]
+        TenantDB[(PostgreSQL 16 - pos_tenant_slug DBs)]
+        Redis[(Redis 7.2 AOF - Settings Cache, Lua Rate Limits, Asynq)]
     end
 
     Router --> MasterDB
@@ -71,18 +82,19 @@ flowchart TB
     Worker --> TenantDB
 ```
 
+> View the complete diagrams and module flows directly on GitHub in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ### Core Architectural Invariants
 
 1. **Dual-Scope Database-Per-Company Topology:**
    - **Master Control Plane (`enterprise_pos`):** Houses Platform SuperAdmin identities, platform sessions, cross-tenant company provisioning records, and global audit logs — isolated behind `PlatformAdminMiddleware` (`PLATFORM_ADMIN` JWT scope only).
    - **Isolated Tenant Databases (`pos_tenant_<slug>`):** Each company receives its own physical PostgreSQL 16 database provisioned, migrated, and lazily pooled (`MaxConns = 10` per tenant) by [`TenantManager`](backend/internal/infrastructure/tenant/manager.go), with every business-scoped query filtered by `business_id` from verified JWT claims.
 2. **6-Level Settings Inheritance Hierarchy:**
-   Settings resolve dynamically from broadest fallback down to individual SKU, cached in Redis with a thread-safe in-memory TTL fallback and pushed live via WebSocket (`SETTINGS_UPDATED`):
-   $$\text{System Default} \rightarrow \text{Business} \rightarrow \text{Branch / Warehouse} \rightarrow \text{Terminal} \rightarrow \text{Category} \rightarrow \text{Product}$$
+   Settings resolve dynamically from broadest fallback down to individual SKU (`System Default -> Business -> Branch / Warehouse -> Terminal -> Category -> Product`), cached in Redis with a thread-safe in-memory TTL fallback and pushed live via WebSocket (`SETTINGS_UPDATED`).
 3. **Zero Floating-Point Currency Math:**
    PostgreSQL stores monetary quantities as `NUMERIC(19,4)`, `sqlc` maps database numeric columns to `shopspring/decimal`, and the frontend handles decimal arithmetic as strings/decimal utilities to avoid IEEE-754 rounding drift.
 4. **Immutable Double-Entry Accounting:**
-   Every financial event (`POS Checkout`, `Refund`, `Void`, `GRN Approval`) executes inside a single `pgx/v5` ACID transaction and writes balanced `journal_entries` and `journal_lines`. A deferred PostgreSQL constraint trigger (`trg_verify_journal_balance`) enforces $\sum \text{debit} = \sum \text{credit}$ on commit.
+   Every financial event (`POS Checkout`, `Refund`, `Void`, `GRN Approval`) executes inside a single `pgx/v5` ACID transaction and writes balanced `journal_entries` and `journal_lines`. A deferred PostgreSQL constraint trigger (`trg_verify_journal_balance`) enforces `SUM(debit) = SUM(credit)` on commit.
 5. **Warehouse FIFO Batch Depletion & Auto-PO Replenishment:**
    Checkouts lock active `inventory_batches` rows with `SELECT ... FOR UPDATE` (`received_at ASC, expiry_date ASC NULLS LAST, id ASC`), compute weighted FIFO COGS, record `stock_movements`, and trigger Asynq (`inventory:check_low_stock`) to draft purchase orders and supplier invoices when remaining stock falls at or below `reorder_point`.
 6. **Offline-First Edge POS Sync:**
@@ -167,9 +179,10 @@ POS/
 │   │   ├── domain/                        # Domain structs, TenantContext, SessionPolicy
 │   │   ├── infrastructure/
 │   │   │   ├── db/                        # Master & per-tenant migration runner + DSN helpers
+│   │   │   ├── mailer/                    # SMTP password-reset email delivery & mock tests
 │   │   │   ├── ratelimit/                 # Atomic Redis Lua + in-memory multi-tier limiter & tests
 │   │   │   ├── tenant/                    # Database-per-company pool & usecase router
-│   │   │   └── ws/                        # Tenant-scoped WebSocket broadcast hub
+│   │   │   └── ws/                        # Mutex-safe Tenant (/ws) & SuperAdmin (/ws/admin) WebSocket hubs
 │   │   ├── repository/sqlc/               # SQL query definitions & sqlc-generated pgx/v5 bindings
 │   │   ├── usecase/                       # Auth, FIFO inventory, Tax engine, GL, Analytics, Print Studio, 6-level settings
 │   │   └── worker/                        # Asynq low-stock Auto-PO background worker
@@ -178,16 +191,18 @@ POS/
 │   ├── go.mod
 │   └── sqlc.yaml
 ├── frontend/
-│   ├── public/favicon.svg                 # KOVA geometric K emblem
+│   ├── public/
+│   │   ├── brand/                         # Official KOVA POS logos, favicons, app-icons, system-icons, website & artwork
+│   │   └── favicon.ico                    # Official KOVA POS browser favicon
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── brand/KovaLogo.tsx         # KovaMark & KovaLogo lockups
+│   │   │   ├── brand/                     # KovaLogo.tsx, KovaAuthBackdrop.tsx, KovaSystemIcons.tsx
 │   │   │   ├── dqnamo/                    # Tactile POS keypad, tickets, print & motion primitives
 │   │   │   ├── layout/                    # FloatingSidebar, TopHeader, AppShell
 │   │   │   ├── skeletons/                 # 1:1 zero-CLS page skeletons
 │   │   │   └── ui/                        # shadcn/ui components & DateRangePicker
 │   │   ├── features/                      # auth, admin, overview, pos, catalog, inventory, accounting, reports, print-studio, settings
-│   │   ├── lib/                           # api client, dexie-db offline engine, escpos-bridge, decimal & currency helpers
+│   │   ├── lib/                           # api client, realtime sync engine, dexie-db offline engine, escpos-bridge, decimal helpers
 │   │   ├── locales/                       # English (en), Sinhala (si), Tamil (ta) translations
 │   │   └── store/                         # Zustand stores (auth, platformAdmin, pos, theme, i18n)
 │   ├── Dockerfile
@@ -196,6 +211,7 @@ POS/
 │   └── vite.config.ts
 ├── docs/                                  # System Design Document (sdd.md) & UI design context
 ├── UIUX/                                  # Design system specification
+├── ARCHITECTURE.md                        # Full GitHub-readable architecture guide & Mermaid diagrams
 ├── .env.example                           # Documented environment variable template (copy to .env)
 ├── .gitignore                             # Excludes .env, node_modules, dist, .vite, and agent files
 └── docker-compose.yml                     # PostgreSQL 16 + Redis 7.2 + Go API + Nginx Frontend
