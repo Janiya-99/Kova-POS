@@ -214,6 +214,19 @@ type JournalLine struct {
 	Memo           string          `json:"memo"`
 }
 
+type PasswordResetToken struct {
+	ID          uuid.UUID          `json:"id"`
+	UserID      uuid.UUID          `json:"user_id"`
+	Email       string             `json:"email"`
+	CodeHash    string             `json:"code_hash"`
+	TokenHash   string             `json:"token_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UsedAt      pgtype.Timestamptz `json:"used_at"`
+	Attempts    int32              `json:"attempts"`
+	RequestedIp string             `json:"requested_ip"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Permission struct {
 	ID          uuid.UUID `json:"id"`
 	Module      string    `json:"module"`

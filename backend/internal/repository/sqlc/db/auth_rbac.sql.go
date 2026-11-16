@@ -13,6 +13,74 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const createPasswordResetToken = `-- name: CreatePasswordResetToken :one
+INSERT INTO password_reset_tokens (
+    user_id, email, code_hash, token_hash, expires_at, requested_ip
+) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, email, code_hash, token_hash, expires_at, used_at, attempts, requested_ip, created_at
+`
+
+type CreatePasswordResetTokenParams struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	Email       string             `json:"email"`
+	CodeHash    string             `json:"code_hash"`
+	TokenHash   string             `json:"token_hash"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	RequestedIp string             `json:"requested_ip"`
+}
+
+func (q *Queries) CreatePasswordResetToken(ctx context.Context, arg CreatePasswordResetTokenParams) (PasswordResetToken, error) {
+	row := q.db.QueryRow(ctx, createPasswordResetToken,
+		arg.UserID,
+		arg.Email,
+		arg.CodeHash,
+		arg.TokenHash,
+		arg.ExpiresAt,
+		arg.RequestedIp,
+	)
+	var i PasswordResetToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Email,
+		&i.CodeHash,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+		&i.RequestedIp,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getActivePasswordResetTokenByTokenHash = `-- name: GetActivePasswordResetTokenByTokenHash :one
+SELECT id, user_id, email, code_hash, token_hash, expires_at, used_at, attempts, requested_ip, created_at
+FROM password_reset_tokens
+WHERE token_hash = $1
+  AND used_at IS NULL
+  AND expires_at > NOW()
+LIMIT 1
+`
+
+func (q *Queries) GetActivePasswordResetTokenByTokenHash(ctx context.Context, tokenHash string) (PasswordResetToken, error) {
+	row := q.db.QueryRow(ctx, getActivePasswordResetTokenByTokenHash, tokenHash)
+	var i PasswordResetToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Email,
+		&i.CodeHash,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+		&i.RequestedIp,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getAllBusinessContextsForSuperAdmin = `-- name: GetAllBusinessContextsForSuperAdmin :many
 WITH sa_membership AS (
     SELECT
@@ -121,6 +189,40 @@ func (q *Queries) GetAllBusinessContextsForSuperAdmin(ctx context.Context, userI
 		return nil, err
 	}
 	return items, nil
+}
+
+const getLatestActivePasswordResetTokenByEmail = `-- name: GetLatestActivePasswordResetTokenByEmail :one
+SELECT id, user_id, email, code_hash, token_hash, expires_at, used_at, attempts, requested_ip, created_at
+FROM password_reset_tokens
+WHERE user_id = $1
+  AND LOWER(email) = LOWER($2)
+  AND used_at IS NULL
+  AND expires_at > NOW()
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetLatestActivePasswordResetTokenByEmailParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Lower  string    `json:"lower"`
+}
+
+func (q *Queries) GetLatestActivePasswordResetTokenByEmail(ctx context.Context, arg GetLatestActivePasswordResetTokenByEmailParams) (PasswordResetToken, error) {
+	row := q.db.QueryRow(ctx, getLatestActivePasswordResetTokenByEmail, arg.UserID, arg.Lower)
+	var i PasswordResetToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Email,
+		&i.CodeHash,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.Attempts,
+		&i.RequestedIp,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getSuperAdminContextForBusiness = `-- name: GetSuperAdminContextForBusiness :one
@@ -457,6 +559,37 @@ func (q *Queries) GetUserRoleForBusiness(ctx context.Context, arg GetUserRoleFor
 		&i.SupervisorPinHash,
 	)
 	return i, err
+}
+
+const incrementPasswordResetTokenAttempts = `-- name: IncrementPasswordResetTokenAttempts :one
+UPDATE password_reset_tokens
+SET attempts = attempts + 1,
+    used_at = CASE WHEN attempts + 1 >= 5 THEN NOW() ELSE used_at END
+WHERE id = $1
+RETURNING attempts, used_at
+`
+
+type IncrementPasswordResetTokenAttemptsRow struct {
+	Attempts int32              `json:"attempts"`
+	UsedAt   pgtype.Timestamptz `json:"used_at"`
+}
+
+func (q *Queries) IncrementPasswordResetTokenAttempts(ctx context.Context, id uuid.UUID) (IncrementPasswordResetTokenAttemptsRow, error) {
+	row := q.db.QueryRow(ctx, incrementPasswordResetTokenAttempts, id)
+	var i IncrementPasswordResetTokenAttemptsRow
+	err := row.Scan(&i.Attempts, &i.UsedAt)
+	return i, err
+}
+
+const invalidateUnusedPasswordResetTokens = `-- name: InvalidateUnusedPasswordResetTokens :exec
+UPDATE password_reset_tokens
+SET used_at = NOW()
+WHERE user_id = $1 AND used_at IS NULL
+`
+
+func (q *Queries) InvalidateUnusedPasswordResetTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, invalidateUnusedPasswordResetTokens, userID)
+	return err
 }
 
 const listBranchesForBusiness = `-- name: ListBranchesForBusiness :many
@@ -798,6 +931,17 @@ func (q *Queries) ListWarehousesForBusiness(ctx context.Context, businessID uuid
 		return nil, err
 	}
 	return items, nil
+}
+
+const markPasswordResetTokenUsed = `-- name: MarkPasswordResetTokenUsed :exec
+UPDATE password_reset_tokens
+SET used_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) MarkPasswordResetTokenUsed(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markPasswordResetTokenUsed, id)
+	return err
 }
 
 const updateUserPasswordHash = `-- name: UpdateUserPasswordHash :exec

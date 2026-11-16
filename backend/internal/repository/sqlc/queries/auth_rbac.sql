@@ -226,3 +226,44 @@ UPDATE users
 SET password_hash = $2
 WHERE id = $1 AND is_active = TRUE;
 
+-- name: InvalidateUnusedPasswordResetTokens :exec
+UPDATE password_reset_tokens
+SET used_at = NOW()
+WHERE user_id = $1 AND used_at IS NULL;
+
+-- name: CreatePasswordResetToken :one
+INSERT INTO password_reset_tokens (
+    user_id, email, code_hash, token_hash, expires_at, requested_ip
+) VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, email, code_hash, token_hash, expires_at, used_at, attempts, requested_ip, created_at;
+
+-- name: GetLatestActivePasswordResetTokenByEmail :one
+SELECT id, user_id, email, code_hash, token_hash, expires_at, used_at, attempts, requested_ip, created_at
+FROM password_reset_tokens
+WHERE user_id = $1
+  AND LOWER(email) = LOWER($2)
+  AND used_at IS NULL
+  AND expires_at > NOW()
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: GetActivePasswordResetTokenByTokenHash :one
+SELECT id, user_id, email, code_hash, token_hash, expires_at, used_at, attempts, requested_ip, created_at
+FROM password_reset_tokens
+WHERE token_hash = $1
+  AND used_at IS NULL
+  AND expires_at > NOW()
+LIMIT 1;
+
+-- name: IncrementPasswordResetTokenAttempts :one
+UPDATE password_reset_tokens
+SET attempts = attempts + 1,
+    used_at = CASE WHEN attempts + 1 >= 5 THEN NOW() ELSE used_at END
+WHERE id = $1
+RETURNING attempts, used_at;
+
+-- name: MarkPasswordResetTokenUsed :exec
+UPDATE password_reset_tokens
+SET used_at = NOW()
+WHERE id = $1;
+
