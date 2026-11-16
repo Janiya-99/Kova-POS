@@ -137,6 +137,7 @@ func RegisterRoutes(app *fiber.App, h *Handler, masterAuth *usecase.AuthUsecase,
 	// Public 1-to-1 Company Portal Directory & Tenant Auth
 	v1.Get("/auth/companies", publicLimiter, h.GetPublicCompanies)
 	v1.Get("/auth/branding", publicLimiter, h.GetPublicBranding)
+	v1.Get("/auth/discover", publicLimiter, h.DiscoverWorkspaceByEmail)
 	v1.Post("/auth/login", authLoginLimiter, h.Login)
 	v1.Post("/auth/forgot-password", recoveryLimiter, h.ForgotPassword)
 	v1.Post("/auth/reset-password", recoveryLimiter, h.ResetPassword)

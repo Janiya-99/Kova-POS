@@ -194,32 +194,59 @@ func (h *Handler) resolvePublicTenant(c *fiber.Ctx, slugRaw, bizIDRaw string) (*
 	return nil, fiber.NewError(fiber.StatusBadRequest, "company_slug is required for 1-to-1 portal resolution")
 }
 
+func (h *Handler) resolveCandidateTenantsForEmail(c *fiber.Ctx, emailRaw string) ([]*tenant.TenantBundle, []db.ListPublicPlatformCompaniesRow) {
+	normEmail := strings.ToLower(strings.TrimSpace(emailRaw))
+	if normEmail == "" || !strings.Contains(normEmail, "@") {
+		return nil, nil
+	}
+	companies, err := h.masterAuth.ListPublicCompanies(c.UserContext())
+	if err != nil || len(companies) == 0 {
+		return nil, nil
+	}
+	bundles := make([]*tenant.TenantBundle, 0, 2)
+	matchedMeta := make([]db.ListPublicPlatformCompaniesRow, 0, 2)
+	for _, comp := range companies {
+		b, bErr := h.tenants.GetByBusinessID(c.UserContext(), comp.ID)
+		if bErr != nil || b.Queries == nil {
+			continue
+		}
+		if _, uErr := b.Queries.GetUserByEmail(c.UserContext(), normEmail); uErr == nil {
+			bundles = append(bundles, b)
+			matchedMeta = append(matchedMeta, comp)
+		}
+	}
+	return bundles, matchedMeta
+}
+
 // resolvePublicTenantForAuth resolves explicit portal targets or, when omitted on direct /login,
-// matches the single active tenant or finds the tenant containing the user's email cleanly.
+// matches the tenant database containing the user's email cleanly without falling back across tenants.
 func (h *Handler) resolvePublicTenantForAuth(c *fiber.Ctx, slugRaw, bizIDRaw, emailRaw string) (*tenant.TenantBundle, error) {
 	if strings.TrimSpace(slugRaw) != "" || strings.TrimSpace(bizIDRaw) != "" {
 		return h.resolvePublicTenant(c, slugRaw, bizIDRaw)
 	}
-	companies, err := h.masterAuth.ListPublicCompanies(c.UserContext())
-	if err != nil || len(companies) == 0 {
-		return nil, fiber.NewError(fiber.StatusBadRequest, "no active company workspace found")
+	bundles, _ := h.resolveCandidateTenantsForEmail(c, emailRaw)
+	if len(bundles) > 0 {
+		return bundles[0], nil
 	}
-	if len(companies) == 1 {
-		return h.tenants.GetByBusinessID(c.UserContext(), companies[0].ID)
+	return nil, fiber.NewError(fiber.StatusUnauthorized, "no active company account found for that email")
+}
+
+// DiscoverWorkspaceByEmail resolves a staff member's company branding on /login directly from their email address.
+func (h *Handler) DiscoverWorkspaceByEmail(c *fiber.Ctx) error {
+	normEmail := strings.ToLower(strings.TrimSpace(c.Query("email")))
+	if normEmail == "" || !strings.Contains(normEmail, "@") {
+		return c.JSON(fiber.Map{"matched": false})
 	}
-	normEmail := strings.ToLower(strings.TrimSpace(emailRaw))
-	if normEmail != "" {
-		for _, comp := range companies {
-			b, bErr := h.tenants.GetByBusinessID(c.UserContext(), comp.ID)
-			if bErr != nil || b.Queries == nil {
-				continue
-			}
-			if _, uErr := b.Queries.GetUserByEmail(c.UserContext(), normEmail); uErr == nil {
-				return b, nil
-			}
-		}
+	_, matches := h.resolveCandidateTenantsForEmail(c, normEmail)
+	if len(matches) == 0 {
+		return c.JSON(fiber.Map{"matched": false})
 	}
-	return h.tenants.GetByBusinessID(c.UserContext(), companies[0].ID)
+	return c.JSON(fiber.Map{
+		"matched":   true,
+		"multiple":  len(matches) > 1,
+		"company":   matches[0],
+		"companies": matches,
+	})
 }
 
 // GetPublicBranding returns dynamic white-label branding for a specific 1-to-1 company portal (?company_slug=...).
@@ -257,7 +284,7 @@ func (h *Handler) GetPublicBranding(c *fiber.Ctx) error {
 	})
 }
 
-// Login authenticates a company user strictly against that company's dedicated database (1-to-1 portal login).
+// Login authenticates a company user strictly against that company's dedicated database (auto-resolved by email on /login, or pinned on /c/:slug/login).
 func (h *Handler) Login(c *fiber.Ctx) error {
 	var body struct {
 		Email       string `json:"email"`
@@ -268,34 +295,65 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid login payload"})
 	}
-	bundle, err := h.resolvePublicTenantForAuth(c, body.CompanySlug, body.BusinessID, body.Email)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
-	}
 
 	normEmail := strings.ToLower(strings.TrimSpace(body.Email))
-	policy := bundle.Auth.ResolveSessionPolicy(c.UserContext(), bundle.CompanyID, uuid.Nil, uuid.Nil)
-	failKey := bundle.Slug + ":" + normEmail
-	if h.rateLimiter != nil && policy.RateLimitEnabled && normEmail != "" {
-		if locked, retrySec, _ := h.rateLimiter.CheckLockout(c.UserContext(), "login", failKey, policy.LoginMaxAttempts); locked {
-			h.recordRateLimitAudit(c, &bundle.CompanyID, bundle.Slug, bundle.DBName, normEmail, "auth_login", retrySec)
-			return middleware.TooManyRequestsResponse(
-				c,
-				"auth_login",
-				retrySec,
-				policy.LoginMaxAttempts,
-				fmt.Sprintf("Too many failed sign-in attempts for this account. Try again in %d seconds.", retrySec),
-			)
+	var candidates []*tenant.TenantBundle
+	if strings.TrimSpace(body.CompanySlug) != "" || strings.TrimSpace(body.BusinessID) != "" {
+		bundle, err := h.resolvePublicTenant(c, body.CompanySlug, body.BusinessID)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
+		candidates = []*tenant.TenantBundle{bundle}
+	} else {
+		matched, _ := h.resolveCandidateTenantsForEmail(c, normEmail)
+		if len(matched) == 0 {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid email or password"})
+		}
+		candidates = matched
 	}
 
-	req := usecase.LoginRequest{
-		Email:      body.Email,
-		Password:   body.Password,
-		BusinessID: bundle.CompanyID.String(),
-	}
-	res, err := bundle.Auth.LoginWithMeta(c.UserContext(), req, middleware.ClientMeta(c))
-	if err != nil {
+	var lastErr error
+	for idx, bundle := range candidates {
+		policy := bundle.Auth.ResolveSessionPolicy(c.UserContext(), bundle.CompanyID, uuid.Nil, uuid.Nil)
+		failKey := bundle.Slug + ":" + normEmail
+		if h.rateLimiter != nil && policy.RateLimitEnabled && normEmail != "" {
+			if locked, retrySec, _ := h.rateLimiter.CheckLockout(c.UserContext(), "login", failKey, policy.LoginMaxAttempts); locked {
+				if idx == len(candidates)-1 {
+					h.recordRateLimitAudit(c, &bundle.CompanyID, bundle.Slug, bundle.DBName, normEmail, "auth_login", retrySec)
+					return middleware.TooManyRequestsResponse(
+						c,
+						"auth_login",
+						retrySec,
+						policy.LoginMaxAttempts,
+						fmt.Sprintf("Too many failed sign-in attempts for this account. Try again in %d seconds.", retrySec),
+					)
+				}
+				continue
+			}
+		}
+
+		req := usecase.LoginRequest{
+			Email:      body.Email,
+			Password:   body.Password,
+			BusinessID: bundle.CompanyID.String(),
+		}
+		res, err := bundle.Auth.LoginWithMeta(c.UserContext(), req, middleware.ClientMeta(c))
+		if err == nil {
+			if h.rateLimiter != nil && normEmail != "" {
+				h.rateLimiter.ClearFailures(c.UserContext(), "login", failKey)
+			}
+			h.recordAudit(c, res.Context, "AUTH", "USER_LOGIN", "user", res.Context.UserID.String(),
+				res.Context.FullName+" signed in as "+res.Context.RoleName+" ("+bundle.Slug+" -> "+bundle.DBName+")",
+				"SUCCESS", map[string]any{
+					"industry_profile": res.Context.IndustryProfile,
+					"company_slug":     bundle.Slug,
+					"db_name":          bundle.DBName,
+					"session_id":       res.Context.SessionID.String(),
+				})
+			return c.JSON(res)
+		}
+
+		lastErr = err
 		if h.adminAudit != nil {
 			h.adminAudit.RecordEvent(c.UserContext(), usecase.AuditEventInput{
 				BusinessID:  &bundle.CompanyID,
@@ -311,7 +369,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 				Status:      "DENIED",
 			})
 		}
-		if h.rateLimiter != nil && policy.RateLimitEnabled && normEmail != "" {
+		if idx == len(candidates)-1 && h.rateLimiter != nil && policy.RateLimitEnabled && normEmail != "" {
 			if locked, retrySec, fails := h.rateLimiter.RecordFailure(c.UserContext(), "auth_login", "login", failKey, policy.LoginMaxAttempts, 5*time.Minute); locked {
 				h.recordRateLimitAudit(c, &bundle.CompanyID, bundle.Slug, bundle.DBName, normEmail, "auth_login", retrySec)
 				return middleware.TooManyRequestsResponse(
@@ -323,20 +381,12 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 				)
 			}
 		}
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": err.Error()})
 	}
-	if h.rateLimiter != nil && normEmail != "" {
-		h.rateLimiter.ClearFailures(c.UserContext(), "login", failKey)
+
+	if lastErr == nil {
+		lastErr = fiber.NewError(fiber.StatusUnauthorized, "invalid email or password")
 	}
-	h.recordAudit(c, res.Context, "AUTH", "USER_LOGIN", "user", res.Context.UserID.String(),
-		res.Context.FullName+" signed in as "+res.Context.RoleName+" ("+bundle.Slug+" -> "+bundle.DBName+")",
-		"SUCCESS", map[string]any{
-			"industry_profile": res.Context.IndustryProfile,
-			"company_slug":     bundle.Slug,
-			"db_name":          bundle.DBName,
-			"session_id":       res.Context.SessionID.String(),
-		})
-	return c.JSON(res)
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": lastErr.Error()})
 }
 
 // SwitchContext updates active branch or terminal inside the user's dedicated company database.
