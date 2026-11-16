@@ -287,3 +287,119 @@ export function isSettingRelevantForIndustry(
   return owners.includes(industryMode);
 }
 
+export interface IndustryBlueprintMeta {
+  defaultBranchName: string;
+  defaultBranchCode: string;
+  thermalPaperWidth: string;
+  approvalsSummary: string;
+  departments: string[];
+  designations: Array<{ title: string; maxDiscountPct: number }>;
+  categories: string[];
+  settingsSummary: string[];
+}
+
+export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMeta> = {
+  retail: {
+    defaultBranchName: 'Main Boutique',
+    defaultBranchCode: 'SHOP-01',
+    thermalPaperWidth: '80mm',
+    approvalsSummary: 'Fast GRN & Direct PO',
+    departments: ['Executive & Ownership', 'Floor Styling & POS', 'Merchandising & Finance'],
+    designations: [
+      { title: 'Brand Owner', maxDiscountPct: 100 },
+      { title: 'Store Manager', maxDiscountPct: 35 },
+      { title: 'Floor Stylist / Advisor', maxDiscountPct: 15 },
+      { title: 'POS Sales Cashier', maxDiscountPct: 10 },
+      { title: 'Senior Accountant', maxDiscountPct: 15 },
+      { title: 'Inventory Controller', maxDiscountPct: 5 },
+    ],
+    categories: ['Core Collection', 'Accessories'],
+    settingsSummary: ['Size & Color Matrix Variants', 'Held Bills', '80mm Receipt', 'Max Cashier Disc 15%'],
+  },
+  restaurant: {
+    defaultBranchName: 'Main Dining Room',
+    defaultBranchCode: 'DINE-01',
+    thermalPaperWidth: '80mm',
+    approvalsSummary: 'Instant Kitchen Pantry Intake',
+    departments: ['Ownership & Management', 'Culinary & Kitchen Line', 'Dining Room & Front-of-House', 'Pantry, Costing & Accounts'],
+    designations: [
+      { title: 'Restaurant Proprietor', maxDiscountPct: 100 },
+      { title: 'Floor & Shift Manager', maxDiscountPct: 30 },
+      { title: 'Head Chef / KOT Lead', maxDiscountPct: 15 },
+      { title: 'Waiter / Table Server', maxDiscountPct: 10 },
+      { title: 'Counter & Takeaway Cashier', maxDiscountPct: 10 },
+      { title: 'Senior Accountant', maxDiscountPct: 15 },
+      { title: 'Pantry & Supply Controller', maxDiscountPct: 5 },
+    ],
+    categories: ['Main Kitchen', 'Beverages & Bar', 'Desserts & Pastry'],
+    settingsSummary: ['Dining Tables Enabled', 'Live Kitchen KOT Queue', '80mm KOT Ticket', '2x Loyalty Points'],
+  },
+  hardware: {
+    defaultBranchName: 'Central Hardware Yard',
+    defaultBranchCode: 'YARD-01',
+    thermalPaperWidth: '80mm',
+    approvalsSummary: 'Manager Approval on PO & GRN',
+    departments: ['Proprietorship', 'Trade & Contractor Desk', 'Timber, Dispatch & Warehouse', 'Finance & Costing'],
+    designations: [
+      { title: 'Hardware Proprietor', maxDiscountPct: 100 },
+      { title: 'Yard & Branch Manager', maxDiscountPct: 35 },
+      { title: 'Contractor Account Rep', maxDiscountPct: 20 },
+      { title: 'Counter & Scale Cashier', maxDiscountPct: 10 },
+      { title: 'Senior Accountant', maxDiscountPct: 15 },
+      { title: 'Warehouse Stock Controller', maxDiscountPct: 5 },
+    ],
+    categories: ['Building Materials', 'Power Tools & Fasteners'],
+    settingsSummary: ['Fractional Decimal Qty', 'Multi-UOM Switching', 'PO + GRN Approvals', 'Max Contractor Disc 20%'],
+  },
+  garage: {
+    defaultBranchName: 'Main Service Bays',
+    defaultBranchCode: 'BAY-01',
+    thermalPaperWidth: '80mm',
+    approvalsSummary: 'PO Approval Required',
+    departments: ['Workshop Management', 'Service Bays & Diagnostics', 'Spare Parts & Service Counter', 'Billing & Accounting'],
+    designations: [
+      { title: 'Workshop Owner', maxDiscountPct: 100 },
+      { title: 'Service Advisor', maxDiscountPct: 25 },
+      { title: 'Lead Mechanic / Technician', maxDiscountPct: 10 },
+      { title: 'Billing & Parts Cashier', maxDiscountPct: 10 },
+      { title: 'Senior Accountant', maxDiscountPct: 15 },
+      { title: 'Spare Parts Controller', maxDiscountPct: 5 },
+    ],
+    categories: ['Service & Labor', 'Spare Parts & Fluids'],
+    settingsSummary: ['Mandatory Vehicle Plate', 'Split Parts vs Labor', 'Bay Job Cards', 'Fractional Fluid Qty'],
+  },
+  mobile: {
+    defaultBranchName: 'Flagship Device Lounge',
+    defaultBranchCode: 'TECH-01',
+    thermalPaperWidth: '80mm',
+    approvalsSummary: 'Strict Serialized PO & GRN Approval',
+    departments: ['Executive & Warranty', 'Device Sales & Activation', 'Diagnostics & Repairs', 'Serialized Inventory & Audit'],
+    designations: [
+      { title: 'Store Director', maxDiscountPct: 100 },
+      { title: 'Store & Warranty Manager', maxDiscountPct: 25 },
+      { title: 'Device & IMEI Specialist', maxDiscountPct: 15 },
+      { title: 'Sales Associate', maxDiscountPct: 10 },
+      { title: 'Senior Accountant', maxDiscountPct: 15 },
+      { title: 'Serialized Stock Controller', maxDiscountPct: 5 },
+    ],
+    categories: ['Smartphones & Devices', 'Accessories & Chargers'],
+    settingsSummary: ['Mandatory IMEI / Serial', 'PO + GRN Audit Lock', 'Warranty Terms', '80mm Warranty Slip'],
+  },
+  stationery: {
+    defaultBranchName: 'Express Flagship Counter',
+    defaultBranchCode: 'FAST-01',
+    thermalPaperWidth: '58mm',
+    approvalsSummary: 'High-Velocity Fast Intake',
+    departments: ['Management', 'Express Checkout Lane', 'Bulk Packs & Supply'],
+    designations: [
+      { title: 'Business Proprietor', maxDiscountPct: 100 },
+      { title: 'Floor Supervisor', maxDiscountPct: 25 },
+      { title: 'Express Lane Cashier', maxDiscountPct: 10 },
+      { title: 'Senior Accountant', maxDiscountPct: 15 },
+      { title: 'Pack & Supply Controller', maxDiscountPct: 5 },
+    ],
+    categories: ['Paper & Notebooks', 'Office Supplies'],
+    settingsSummary: ['7-Col Expanded Grid', 'Pack Bundles & Multi-UOM', '58mm Compact Receipt', '2x Loyalty Points'],
+  },
+};
+

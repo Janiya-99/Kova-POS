@@ -55,11 +55,30 @@ import { getCompanyLoginPath, normalizeCompanySlug } from '@/store/authStore';
 import { usePlatformAdminStore } from '@/store/platformAdminStore';
 import { toast } from 'sonner';
 import {
+  INDUSTRY_BLUEPRINTS,
   INDUSTRY_MODE_LIST,
   INDUSTRY_PRESETS,
   normalizeIndustryMode,
   type IndustryLayoutMode,
 } from '../pos/components/capabilities';
+
+function buildUniqueCompanySlug(rawName: string, existingSlugs: Set<string>): string {
+  let base = normalizeCompanySlug(rawName);
+  if (!base) return '';
+  if (['admin', 'login', 'platform', 'api'].includes(base)) {
+    base = `${base}-co`;
+  }
+  if (!existingSlugs.has(base)) {
+    return base;
+  }
+  for (let suffix = 2; suffix <= 99; suffix++) {
+    const candidate = `${base}-${suffix}`;
+    if (!existingSlugs.has(candidate)) {
+      return candidate;
+    }
+  }
+  return base;
+}
 
 interface AdminCompanyRow {
   id: string;
@@ -199,6 +218,7 @@ export function AdminPortalPage() {
   const [compSlug, setCompSlug] = React.useState('');
   const [slugTouched, setSlugTouched] = React.useState(false);
   const [compTradeName, setCompTradeName] = React.useState('');
+  const [tradeNameTouched, setTradeNameTouched] = React.useState(false);
   const [compLegalName, setCompLegalName] = React.useState('');
   const [compIndustry, setCompIndustry] = React.useState<IndustryLayoutMode>('restaurant');
   const [compCurrency, setCompCurrency] = React.useState('LKR');
@@ -206,8 +226,9 @@ export function AdminPortalPage() {
   const [compVatReg, setCompVatReg] = React.useState('');
   const [compAccent] = React.useState('#877FC1');
   const [compApplySlTax, setCompApplySlTax] = React.useState(true);
-  const [branchName, setBranchName] = React.useState('Main Flagship');
-  const [branchCode, setBranchCode] = React.useState('MAIN-01');
+  const [branchName, setBranchName] = React.useState(INDUSTRY_BLUEPRINTS.restaurant.defaultBranchName);
+  const [branchCode, setBranchCode] = React.useState(INDUSTRY_BLUEPRINTS.restaurant.defaultBranchCode);
+  const [branchTouched, setBranchTouched] = React.useState(false);
   const [branchCity, setBranchCity] = React.useState('Colombo');
   const [ownerFullName, setOwnerFullName] = React.useState('');
   const [ownerEmail, setOwnerEmail] = React.useState('');
@@ -335,23 +356,49 @@ export function AdminPortalPage() {
   const totalUsersAcrossPlatform = companies.reduce((sum, c) => sum + (c.user_count || 0), 0);
   const totalInvoicesAcrossPlatform = companies.reduce((sum, c) => sum + (c.invoice_count || 0), 0);
 
-  const effectiveSlug = normalizeCompanySlug(compSlug || compName);
+  const existingSlugSet = React.useMemo(
+    () => new Set(companies.map((c) => normalizeCompanySlug(c.slug))),
+    [companies]
+  );
+  const duplicateCompanyName = React.useMemo(() => {
+    const clean = compName.trim().toLowerCase();
+    if (!clean) return false;
+    return companies.some((c) => c.name.trim().toLowerCase() === clean);
+  }, [companies, compName]);
+
+  const effectiveSlug = slugTouched
+    ? normalizeCompanySlug(compSlug)
+    : compSlug || buildUniqueCompanySlug(compName, existingSlugSet);
+  const duplicateSlug = Boolean(effectiveSlug) && existingSlugSet.has(effectiveSlug);
   const previewDbName = deriveDbPreview(effectiveSlug);
   const previewLoginPath = getCompanyLoginPath(effectiveSlug);
+  const activeBlueprint = INDUSTRY_BLUEPRINTS[compIndustry];
+
+  const handleSelectIndustryVertical = (nextMode: IndustryLayoutMode) => {
+    setCompIndustry(nextMode);
+    if (!branchTouched) {
+      const nextBp = INDUSTRY_BLUEPRINTS[nextMode];
+      setBranchName(nextBp.defaultBranchName);
+      setBranchCode(nextBp.defaultBranchCode);
+    }
+  };
 
   const resetCreateCompanyForm = () => {
+    const defaultBp = INDUSTRY_BLUEPRINTS.restaurant;
     setCompName('');
     setCompSlug('');
     setSlugTouched(false);
     setCompTradeName('');
+    setTradeNameTouched(false);
     setCompLegalName('');
     setCompIndustry('restaurant');
     setCompCurrency('LKR');
     setCompLanguage('en');
     setCompVatReg('');
     setCompApplySlTax(true);
-    setBranchName('Main Flagship');
-    setBranchCode('MAIN-01');
+    setBranchName(defaultBp.defaultBranchName);
+    setBranchCode(defaultBp.defaultBranchCode);
+    setBranchTouched(false);
     setBranchCity('Colombo');
     setOwnerFullName('');
     setOwnerEmail('');
@@ -376,8 +423,16 @@ export function AdminPortalPage() {
       toast.error('Company name is required');
       return;
     }
+    if (duplicateCompanyName) {
+      toast.error(`A company named "${compName.trim()}" already exists`);
+      return;
+    }
     if (!effectiveSlug) {
       toast.error('Valid company portal slug is required');
+      return;
+    }
+    if (duplicateSlug) {
+      toast.error(`Portal slug "${effectiveSlug}" already exists — choose a unique identity`);
       return;
     }
     if (!ownerEmail.trim() || !ownerEmail.includes('@')) {
@@ -1358,13 +1413,16 @@ export function AdminPortalPage() {
               </p>
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-ink">Owner Full Name</label>
+                  <label className="text-[11px] font-semibold text-ink">
+                    Owner Full Name <span className="text-ink-muted font-normal">(auto-filled if blank)</span>
+                  </label>
                   <Input
                     value={ownerFullName}
                     onChange={(e) => setOwnerFullName(e.target.value)}
-                    placeholder="e.g., Kavinda Silva"
+                    placeholder={
+                      compName.trim() ? `${compName.trim()} Owner` : 'e.g., Kavinda Silva'
+                    }
                     data-testid="admin-create-owner-name"
-                    required
                   />
                 </div>
                 <div className="space-y-1">
@@ -1417,9 +1475,24 @@ export function AdminPortalPage() {
 
             {/* Step 2: Company Basic Details & Dedicated Slug/Database Preview */}
             <div className="space-y-2.5">
-              <p className="text-[11px] font-bold uppercase tracking-wider text-ink">
-                2. Company Basic Details &amp; Isolated Database Identity
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-ink">
+                  2. Company Basic Details &amp; Isolated Database Identity
+                </p>
+                {duplicateCompanyName ? (
+                  <span className="inline-flex items-center rounded-full bg-[#EF4444]/10 px-2.5 py-0.5 text-[10.5px] font-semibold text-[#EF4444]">
+                    Duplicate company name
+                  </span>
+                ) : duplicateSlug ? (
+                  <span className="inline-flex items-center rounded-full bg-[#EF4444]/10 px-2.5 py-0.5 text-[10.5px] font-semibold text-[#EF4444]">
+                    Duplicate slug in use
+                  </span>
+                ) : effectiveSlug ? (
+                  <span className="inline-flex items-center rounded-full bg-[#22C55E]/12 px-2.5 py-0.5 text-[10.5px] font-semibold text-[#16A34A]">
+                    Unique DB &amp; Portal Ready
+                  </span>
+                ) : null}
+              </div>
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-ink">Company Name</label>
@@ -1429,7 +1502,10 @@ export function AdminPortalPage() {
                       const next = e.target.value;
                       setCompName(next);
                       if (!slugTouched) {
-                        setCompSlug(normalizeCompanySlug(next));
+                        setCompSlug(buildUniqueCompanySlug(next, existingSlugSet));
+                      }
+                      if (!tradeNameTouched) {
+                        setCompTradeName(next);
                       }
                     }}
                     placeholder="e.g., Lanka Spice Co"
@@ -1438,24 +1514,41 @@ export function AdminPortalPage() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-ink">Company Slug (1-to-1 URL)</label>
+                  <div className="flex items-center justify-between gap-1">
+                    <label className="text-[11px] font-semibold text-ink">Company Slug (Auto)</label>
+                    {slugTouched && compName.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSlugTouched(false);
+                          setCompSlug(buildUniqueCompanySlug(compName, existingSlugSet));
+                        }}
+                        className="text-[10px] font-semibold text-accent hover:underline cursor-pointer"
+                      >
+                        Reset Auto
+                      </button>
+                    )}
+                  </div>
                   <Input
-                    value={compSlug}
+                    value={effectiveSlug}
                     onChange={(e) => {
                       setSlugTouched(true);
                       setCompSlug(normalizeCompanySlug(e.target.value));
                     }}
-                    placeholder="lanka-spice"
+                    placeholder="lanka-spice-co"
                     className="font-mono lowercase"
                     required
                     data-testid="admin-create-comp-slug"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-ink">Trade Name</label>
+                  <label className="text-[11px] font-semibold text-ink">Trade Name (Auto)</label>
                   <Input
                     value={compTradeName}
-                    onChange={(e) => setCompTradeName(e.target.value)}
+                    onChange={(e) => {
+                      setTradeNameTouched(true);
+                      setCompTradeName(e.target.value);
+                    }}
                     placeholder="Shown in header & receipts"
                   />
                 </div>
@@ -1507,8 +1600,11 @@ export function AdminPortalPage() {
                   <label className="text-[11px] font-semibold text-ink">Primary Branch</label>
                   <Input
                     value={branchName}
-                    onChange={(e) => setBranchName(e.target.value)}
-                    placeholder="Main Flagship"
+                    onChange={(e) => {
+                      setBranchTouched(true);
+                      setBranchName(e.target.value);
+                    }}
+                    placeholder={activeBlueprint.defaultBranchName}
                   />
                 </div>
                 <div className="space-y-1">
@@ -1524,9 +1620,9 @@ export function AdminPortalPage() {
             </div>
 
             {/* Step 3: Business Vertical Selector */}
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <label className="text-[11px] font-bold uppercase tracking-wider text-ink">
-                3. Business Vertical (Scopes POS &amp; Settings in Dedicated DB)
+                3. Business Vertical (Auto-Migrates Settings, Designations &amp; POS Mode)
               </label>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {INDUSTRY_MODE_LIST.map((preset) => {
@@ -1535,7 +1631,7 @@ export function AdminPortalPage() {
                     <button
                       key={preset.mode}
                       type="button"
-                      onClick={() => setCompIndustry(preset.mode)}
+                      onClick={() => handleSelectIndustryVertical(preset.mode)}
                       data-testid={`admin-select-industry-${preset.mode}`}
                       className={`flex flex-col items-start justify-between rounded-[var(--theme-radius-inner)] border p-2.5 text-left transition-all cursor-pointer ${
                         selected
@@ -1557,6 +1653,54 @@ export function AdminPortalPage() {
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Live Auto-Migrated Settings, Departments & Designations Preview */}
+              <div
+                className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/45 p-3 space-y-2.5"
+                data-testid="admin-industry-blueprint-preview"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10.5px] font-bold uppercase tracking-wider text-ink">
+                    Auto-Generated for {INDUSTRY_PRESETS[compIndustry].label}
+                  </span>
+                  <span className="font-mono text-[10px] font-semibold text-ink-muted">
+                    Branch: {branchCode} · Paper: {activeBlueprint.thermalPaperWidth} · {activeBlueprint.approvalsSummary}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted">
+                      Migrated Settings &amp; Features
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {activeBlueprint.settingsSummary.map((item) => (
+                        <span
+                          key={item}
+                          className="inline-flex items-center rounded-md border border-border-theme bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink"
+                        >
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted">
+                      Migrated Designations ({activeBlueprint.designations.length}) &amp; Categories ({activeBlueprint.categories.length})
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {activeBlueprint.designations.map((dg) => (
+                        <span
+                          key={dg.title}
+                          className="inline-flex items-center rounded-md border border-border-theme bg-surface px-1.5 py-0.5 text-[10px] font-medium text-ink"
+                        >
+                          {dg.title} ({dg.maxDiscountPct}%)
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1580,6 +1724,7 @@ export function AdminPortalPage() {
                 type="submit"
                 variant="obsidian"
                 loading={creatingCompany}
+                disabled={duplicateCompanyName || duplicateSlug}
                 data-testid="admin-submit-company-btn"
               >
                 Create Isolated Company &amp; DB
