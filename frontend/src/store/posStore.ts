@@ -28,11 +28,18 @@ export interface OrderMetaState {
 export function buildCartLineKey(productId: string, itemMeta?: CartItemMeta): string {
   if (!itemMeta) return productId;
   const variant = itemMeta.variant?.trim() || '';
-  const serial = itemMeta.serial_imei?.trim() || '';
   const uom = itemMeta.uom_label?.trim() || '';
   const mods = (itemMeta.modifiers || []).slice().sort().join(',');
-  if (!variant && !serial && !uom && !mods) return productId;
-  return `${productId}::${variant}::${serial}::${uom}::${mods}`;
+  if (!variant && !uom && !mods) return productId;
+  return `${productId}::${variant}::${uom}::${mods}`;
+}
+
+export function parseSerialImeiList(raw?: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function matchesLine(item: CartItem, keyOrProductId: string): boolean {
@@ -88,8 +95,24 @@ export const usePOSStore = create<POSState>((set) => ({
       const idx = state.items.findIndex((i) => i.lineKey === lineKey);
       if (idx >= 0) {
         const next = [...state.items];
-        const nextQtyStr = roundDecimal(addDecimal(next[idx].qty, qtyDelta), 3, 'HALF_UP');
-        next[idx] = { ...next[idx], qty: Number(normalizeDecimal(nextQtyStr, 0)) };
+        const existing = next[idx];
+        const nextQtyStr = roundDecimal(addDecimal(existing.qty, qtyDelta), 3, 'HALF_UP');
+        const existingImeis = parseSerialImeiList(existing.itemMeta?.serial_imei);
+        const incomingImeis = parseSerialImeiList(itemMeta?.serial_imei);
+        const mergedImeis = Array.from(new Set([...existingImeis, ...incomingImeis]));
+        const nextMeta: CartItemMeta | undefined =
+          existing.itemMeta || itemMeta
+            ? {
+                ...(existing.itemMeta || {}),
+                ...(itemMeta || {}),
+                ...(mergedImeis.length > 0 ? { serial_imei: mergedImeis.join(', ') } : {}),
+              }
+            : undefined;
+        next[idx] = {
+          ...existing,
+          qty: Number(normalizeDecimal(nextQtyStr, 0)),
+          itemMeta: nextMeta,
+        };
         return { items: next };
       }
       const autoDiscountPercent = getProductPromoPercent(product);

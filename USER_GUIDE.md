@@ -242,3 +242,4 @@ POSTGRES_PORT=5433 REDIS_ADDR=localhost:6379 API_BASE_URL=http://localhost:8080/
 ```
 
 For full benchmark tables, query execution plans, concurrency stress test telemetry, and security trigger proofs, see [PERFORMANCE_AND_SECURITY.md](file:///home/janith/Projects/POS/PERFORMANCE_AND_SECURITY.md).
+

@@ -44,7 +44,7 @@ import {
   roundHalfUp2,
   subDecimal,
 } from '@/lib/decimal';
-import type { CartItem, OrderMetaState } from '@/store/posStore';
+import { parseSerialImeiList, type CartItem, type OrderMetaState } from '@/store/posStore';
 import {
   parseJSONField,
   type CartItemMeta,
@@ -174,9 +174,39 @@ function CartLineCard({
     setQtyDraft(trimmed);
   };
 
+  const isSerializedLine =
+    capabilities.requireSerialImei && Boolean(item.product.enable_serial_tracking);
+  const requiredImeiCount = isSerializedLine ? Math.max(1, Math.round(item.qty)) : 0;
+  const capturedImeis = React.useMemo(
+    () => parseSerialImeiList(item.itemMeta?.serial_imei),
+    [item.itemMeta?.serial_imei],
+  );
+  const missingImeiCount = isSerializedLine
+    ? Math.max(0, requiredImeiCount - capturedImeis.length)
+    : 0;
+  const [imeiEditorOpen, setImeiEditorOpen] = React.useState(false);
+
+  const imeiSlots = React.useMemo(() => {
+    if (!isSerializedLine) return [];
+    return Array.from({ length: requiredImeiCount }, (_, idx) => capturedImeis[idx] || '');
+  }, [isSerializedLine, requiredImeiCount, capturedImeis]);
+
+  const handleUpdateLineImeiAt = (slotIdx: number, val: string) => {
+    const nextSlots = [...imeiSlots];
+    nextSlots[slotIdx] = val;
+    const cleaned = nextSlots.map((s) => s.trim()).filter(Boolean);
+    onSetMeta(item.lineKey, {
+      serial_imei: cleaned.join(', '),
+    });
+  };
+
   const badges: string[] = [];
   if (item.itemMeta?.variant) badges.push(item.itemMeta.variant);
-  if (item.itemMeta?.serial_imei) badges.push(`IMEI ${item.itemMeta.serial_imei}`);
+  if (capturedImeis.length === 1 && requiredImeiCount === 1) {
+    badges.push(`IMEI ${capturedImeis[0]}`);
+  } else if (capturedImeis.length > 0) {
+    capturedImeis.forEach((im, idx) => badges.push(`IMEI #${idx + 1}: ${im}`));
+  }
   if (item.itemMeta?.modifiers?.length) badges.push(item.itemMeta.modifiers.join(', '));
   if (item.itemMeta?.notes) badges.push(item.itemMeta.notes);
 
@@ -205,8 +235,8 @@ function CartLineCard({
             {item.itemMeta?.uom_label ? ` (${item.itemMeta.uom_label})` : ''}
             {item.discountPercent > 0 ? ` • -${item.discountPercent}%` : ''}
           </p>
-          {badges.length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-1">
+          {(badges.length > 0 || isSerializedLine) && (
+            <div className="mt-1 flex flex-wrap items-center gap-1">
               {badges.map((text) => (
                 <span
                   key={text}
@@ -215,6 +245,66 @@ function CartLineCard({
                   {text}
                 </span>
               ))}
+              {isSerializedLine && (
+                <button
+                  type="button"
+                  onClick={() => setImeiEditorOpen((prev) => !prev)}
+                  data-testid={`cart-line-manage-imeis-${item.product.sku}`}
+                  className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9.5px] font-bold transition cursor-pointer ${
+                    missingImeiCount > 0
+                      ? 'bg-[#FEE2E2] text-[#B91C1C]'
+                      : 'border border-border-theme bg-[#F5F6FA] text-[#222026] hover:border-accent'
+                  }`}
+                >
+                  <span>
+                    {missingImeiCount > 0
+                      ? `+ Enter ${missingImeiCount} Missing IMEI${missingImeiCount > 1 ? 's' : ''} (${capturedImeis.length}/${requiredImeiCount})`
+                      : `Edit IMEIs (${capturedImeis.length}/${requiredImeiCount})`}
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Inline Multi-Device IMEI Editor (auto-expands when qty > captured IMEIs) */}
+          {isSerializedLine && (imeiEditorOpen || missingImeiCount > 0) && (
+            <div
+              className="mt-2 space-y-1.5 rounded-[10px] border border-border-theme bg-[#F5F6FA]/80 p-2"
+              data-testid={`cart-line-imei-editor-${item.product.sku}`}
+            >
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="font-bold text-[#222026]">
+                  Device IMEIs ({capturedImeis.length}/{requiredImeiCount} captured)
+                </span>
+                {missingImeiCount === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setImeiEditorOpen(false)}
+                    className="font-semibold text-accent hover:underline cursor-pointer"
+                  >
+                    Done
+                  </button>
+                )}
+              </div>
+              {imeiSlots.map((slotVal, idx) => (
+                <div key={idx} className="flex items-center gap-1.5">
+                  <span className="w-6 shrink-0 font-mono text-[10px] font-bold text-ink-muted">
+                    #{idx + 1}
+                  </span>
+                  <Input
+                    value={slotVal}
+                    onChange={(e) => handleUpdateLineImeiAt(idx, e.target.value)}
+                    placeholder={`Scan/type Device #${idx + 1} IMEI...`}
+                    data-testid={`cart-line-imei-input-${item.product.sku}-${idx}`}
+                    className="h-7 flex-1 bg-white font-mono text-[11px]"
+                  />
+                </div>
+              ))}
+              {missingImeiCount > 0 && (
+                <p className="text-[10px] font-semibold text-[#EF4444]">
+                  Every unit requires a valid 6+ digit IMEI / Serial number before checkout.
+                </p>
+              )}
             </div>
           )}
         </div>

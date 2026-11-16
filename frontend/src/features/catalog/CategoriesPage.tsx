@@ -37,6 +37,7 @@ import {
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
 import { confirmDestructiveAction } from '@/lib/swal';
 import { apiFetch } from '@/lib/api';
+import { getIndustryCategorySegments, resolveCategorySegmentDisplay } from '@/lib/branchAccess';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';
 
@@ -47,21 +48,26 @@ interface CategoryRecord {
   tax_group_name: string;
   name: string;
   slug: string;
-  gender_segment: 'Men' | 'Women' | 'Unisex';
+  gender_segment: string;
   product_count: number;
 }
 
 export function CategoriesPage() {
   const { context } = useAuthStore();
   const queryClient = useQueryClient();
+  const segmentConfig = React.useMemo(
+    () => getIndustryCategorySegments(context?.industry_profile),
+    [context?.industry_profile]
+  );
 
   const [search, setSearch] = React.useState('');
-  const [segmentFilter, setSegmentFilter] = React.useState<'ALL' | 'Men' | 'Women' | 'Unisex'>('ALL');
+  const [segmentFilter, setSegmentFilter] = React.useState<string>('ALL');
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<CategoryRecord | null>(null);
   const [name, setName] = React.useState('');
+  const [nameError, setNameError] = React.useState('');
   const [slug, setSlug] = React.useState('');
-  const [segment, setSegment] = React.useState<'Men' | 'Women' | 'Unisex'>('Unisex');
+  const [segment, setSegment] = React.useState<string>(segmentConfig.defaultSegment);
   const [saving, setSaving] = React.useState(false);
 
   const { data, isLoading } = useQuery({
@@ -73,25 +79,31 @@ export function CategoriesPage() {
   const openCreate = () => {
     setEditing(null);
     setName('');
+    setNameError('');
     setSlug('');
-    setSegment('Unisex');
+    setSegment(segmentConfig.defaultSegment);
     setModalOpen(true);
   };
 
   const openEdit = (cat: CategoryRecord) => {
     setEditing(cat);
     setName(cat.name);
+    setNameError('');
     setSlug(cat.slug);
-    setSegment(cat.gender_segment || 'Unisex');
+    setSegment(
+      resolveCategorySegmentDisplay(cat.gender_segment, cat.slug, context?.industry_profile)
+    );
     setModalOpen(true);
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
+      setNameError('Category name is required');
       toast.error('Category name is required');
       return;
     }
+    setNameError('');
     setSaving(true);
     try {
       await apiFetch(editing ? `/api/v1/categories/${editing.id}` : '/api/v1/categories', {
@@ -134,14 +146,29 @@ export function CategoriesPage() {
     }
   };
 
-  const categories = data?.categories || [];
+  const categories = React.useMemo(
+    () =>
+      (data?.categories || []).map((c) => ({
+        ...c,
+        gender_segment: resolveCategorySegmentDisplay(
+          c.gender_segment,
+          c.slug,
+          context?.industry_profile
+        ),
+      })),
+    [data?.categories, context?.industry_profile]
+  );
   const filtered = React.useMemo(
     () =>
       categories.filter((c) => {
         if (segmentFilter !== 'ALL' && c.gender_segment !== segmentFilter) return false;
         if (!search.trim()) return true;
         const q = search.trim().toLowerCase();
-        return c.name.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q);
+        return (
+          c.name.toLowerCase().includes(q) ||
+          c.slug.toLowerCase().includes(q) ||
+          c.gender_segment.toLowerCase().includes(q)
+        );
       }),
     [categories, segmentFilter, search]
   );
@@ -177,19 +204,33 @@ export function CategoriesPage() {
               />
             </div>
 
-            <div className="inline-flex rounded-[var(--theme-radius-control)] border border-border-theme bg-surface-muted p-0.5 text-[11px]">
-              {(['ALL', 'Men', 'Women', 'Unisex'] as const).map((seg) => (
+            <div
+              className="inline-flex flex-wrap rounded-[var(--theme-radius-control)] border border-border-theme bg-surface-muted p-0.5 text-[11px]"
+              data-testid="category-segment-filter-bar"
+            >
+              <button
+                type="button"
+                onClick={() => setSegmentFilter('ALL')}
+                className={`rounded-[calc(var(--theme-radius-control)-2px)] px-2.5 py-1 font-semibold transition cursor-pointer ${
+                  segmentFilter === 'ALL'
+                    ? 'bg-accent text-accent-fg shadow-xs'
+                    : 'text-ink-muted hover:text-ink'
+                }`}
+              >
+                {segmentConfig.allFilterLabel}
+              </button>
+              {segmentConfig.options.map((seg) => (
                 <button
-                  key={seg}
+                  key={seg.value}
                   type="button"
-                  onClick={() => setSegmentFilter(seg)}
+                  onClick={() => setSegmentFilter(seg.value)}
                   className={`rounded-[calc(var(--theme-radius-control)-2px)] px-2.5 py-1 font-semibold transition cursor-pointer ${
-                    segmentFilter === seg
+                    segmentFilter === seg.value
                       ? 'bg-accent text-accent-fg shadow-xs'
                       : 'text-ink-muted hover:text-ink'
                   }`}
                 >
-                  {seg === 'ALL' ? 'All Segments' : seg}
+                  {seg.label}
                 </button>
               ))}
             </div>
@@ -267,7 +308,14 @@ export function CategoriesPage() {
                 </TableCell>
                 <TableCell className="text-xs text-ink-muted">{cat.slug}</TableCell>
                 <TableCell>
-                  <Badge variant="outline">{formatDisplayLabel(cat.gender_segment)}</Badge>
+                  <Badge
+                    variant={
+                      segmentConfig.options.find((o) => o.value === cat.gender_segment)?.badgeVariant ||
+                      'outline'
+                    }
+                  >
+                    {formatDisplayLabel(cat.gender_segment)}
+                  </Badge>
                 </TableCell>
                 <TableCell>
                   <Badge variant="lavender">{cat.tax_group_name || 'Default Tax'}</Badge>
@@ -329,7 +377,7 @@ export function CategoriesPage() {
               Organize POS catalog navigation, tax rules, and Level-5 category overrides.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSave} className="mt-3 space-y-3.5">
+          <form onSubmit={handleSave} noValidate className="mt-3 space-y-3.5">
             <div className="space-y-1">
               <label className="block text-xs font-semibold text-ink">Category Name *</label>
               <Input
@@ -337,6 +385,7 @@ export function CategoriesPage() {
                 onChange={(e) => {
                   const v = e.target.value;
                   setName(v);
+                  if (nameError) setNameError('');
                   if (!editing) {
                     setSlug(
                       v
@@ -346,8 +395,15 @@ export function CategoriesPage() {
                     );
                   }
                 }}
-                placeholder="e.g., Knitwear"
+                placeholder="e.g., Flagship Smartphones"
+                aria-invalid={Boolean(nameError)}
+                data-testid="category-name-input"
               />
+              {nameError && (
+                <p className="text-[11px] font-medium text-red-500" data-testid="category-name-error">
+                  {nameError}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1">
@@ -355,23 +411,27 @@ export function CategoriesPage() {
               <Input
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
-                placeholder="knitwear"
+                placeholder="flagship-smartphones"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="block text-xs font-semibold text-ink">Segment</label>
+              <label className="block text-xs font-semibold text-ink">
+                {segmentConfig.segmentLabel}
+              </label>
               <Select
                 value={segment}
-                onValueChange={(v) => setSegment(v as 'Men' | 'Women' | 'Unisex')}
+                onValueChange={(v) => setSegment(v)}
               >
-                <SelectTrigger>
+                <SelectTrigger data-testid="category-segment-select">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Unisex">Unisex</SelectItem>
-                  <SelectItem value="Women">Women</SelectItem>
-                  <SelectItem value="Men">Men</SelectItem>
+                  {segmentConfig.options.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

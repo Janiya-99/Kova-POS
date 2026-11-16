@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Award, Globe, Layers, Package, Pencil, Plus, Search, Trash2, CheckCircle2 } from 'lucide-react';
+import { Award, Check, ChevronDown, Globe, Layers, Package, Pencil, Plus, Search, Trash2, CheckCircle2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Dialog,
   DialogContent,
@@ -37,10 +38,34 @@ import {
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
 import { confirmDestructiveAction } from '@/lib/swal';
 import { apiFetch } from '@/lib/api';
+import { BRANCH_COUNTRY_OPTIONS } from '@/lib/branchAccess';
 import { useAuthStore } from '@/store/authStore';
 import { useCurrency } from '@/hooks/useCurrency';
 import type { POSBootstrapResponse, POSBrand } from '@/features/pos/types';
 import { toast } from 'sonner';
+
+const BRAND_COUNTRY_ORIGIN_LIST = [
+  'United States',
+  'China',
+  'South Korea',
+  'Japan',
+  'Taiwan',
+  'Hong Kong',
+  'Sri Lanka',
+  'United Kingdom',
+  'Germany',
+  'India',
+  'Singapore',
+  'United Arab Emirates',
+  'Australia',
+  'Sweden',
+  'France',
+  'Italy',
+  'Switzerland',
+  'Vietnam',
+  'Malaysia',
+  'Canada',
+];
 
 interface BrandRecord extends POSBrand {
   id: string;
@@ -69,8 +94,11 @@ export function BrandsPage() {
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<BrandRecord | null>(null);
   const [name, setName] = React.useState('');
+  const [nameError, setNameError] = React.useState('');
   const [slug, setSlug] = React.useState('');
-  const [country, setCountry] = React.useState('');
+  const [country, setCountry] = React.useState('United States');
+  const [countryDropdownOpen, setCountryDropdownOpen] = React.useState(false);
+  const [countrySearch, setCountrySearch] = React.useState('');
   const [website, setWebsite] = React.useState('');
   const [logoUrl, setLogoUrl] = React.useState('');
   const [description, setDescription] = React.useState('');
@@ -147,8 +175,10 @@ export function BrandsPage() {
   const openCreate = () => {
     setEditing(null);
     setName('');
+    setNameError('');
     setSlug('');
-    setCountry('');
+    setCountry('United States');
+    setCountrySearch('');
     setWebsite('');
     setLogoUrl('');
     setDescription('');
@@ -159,8 +189,10 @@ export function BrandsPage() {
   const openEdit = (brand: BrandRecord) => {
     setEditing(brand);
     setName(brand.name);
+    setNameError('');
     setSlug(brand.slug);
-    setCountry(brand.country || '');
+    setCountry(brand.country || 'United States');
+    setCountrySearch('');
     setWebsite(brand.website || '');
     setLogoUrl(brand.logo_url || '');
     setDescription(brand.description || '');
@@ -168,12 +200,27 @@ export function BrandsPage() {
     setModalOpen(true);
   };
 
+  const searchableCountryOptions = React.useMemo(() => {
+    const merged = Array.from(
+      new Set([
+        ...BRAND_COUNTRY_ORIGIN_LIST,
+        ...BRANCH_COUNTRY_OPTIONS.map((c) => c.name),
+        ...countries,
+      ])
+    ).sort((a, b) => a.localeCompare(b));
+    const q = countrySearch.trim().toLowerCase();
+    if (!q) return merged;
+    return merged.filter((c) => c.toLowerCase().includes(q));
+  }, [countries, countrySearch]);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
+      setNameError('Brand name is required');
       toast.error('Brand name is required');
       return;
     }
+    setNameError('');
     setSaving(true);
     try {
       await apiFetch(editing ? `/api/v1/brands/${editing.id}` : '/api/v1/brands', {
@@ -534,7 +581,7 @@ export function BrandsPage() {
               Organize mobile hardware, warranty partners, and brand-wise POS filters.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSave} className="mt-2 space-y-3">
+          <form onSubmit={handleSave} noValidate className="mt-2 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-ink">Brand Name *</label>
@@ -543,6 +590,7 @@ export function BrandsPage() {
                   onChange={(e) => {
                     const v = e.target.value;
                     setName(v);
+                    if (nameError) setNameError('');
                     if (!editing) {
                       setSlug(
                         v
@@ -553,7 +601,14 @@ export function BrandsPage() {
                     }
                   }}
                   placeholder="e.g., OPPO, Infinix, Soundcore"
+                  aria-invalid={Boolean(nameError)}
+                  data-testid="brand-name-input"
                 />
+                {nameError && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="brand-name-error">
+                    {nameError}
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-ink">Slug</label>
@@ -568,11 +623,75 @@ export function BrandsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-ink">Country Origin</label>
-                <Input
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  placeholder="e.g., USA, China, South Korea"
-                />
+                <Popover open={countryDropdownOpen} onOpenChange={setCountryDropdownOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      data-testid="brand-country-combobox"
+                      className="flex h-9 w-full items-center justify-between rounded-[var(--theme-radius-control)] border border-border-theme bg-surface px-3 py-1.5 text-xs font-semibold text-ink hover:border-accent/60 transition cursor-pointer"
+                    >
+                      <span className="inline-flex items-center gap-1.5 truncate">
+                        <Globe className="h-3.5 w-3.5 text-accent shrink-0" />
+                        <span className="truncate">{country || 'Select Country Origin'}</span>
+                      </span>
+                      <ChevronDown className="h-3.5 w-3.5 text-ink-muted shrink-0" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[260px] p-2 space-y-1.5">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
+                      <Input
+                        value={countrySearch}
+                        onChange={(e) => setCountrySearch(e.target.value)}
+                        placeholder="Search country..."
+                        className="h-8 pl-8 text-xs"
+                        data-testid="brand-country-search-input"
+                      />
+                    </div>
+                    <div className="max-h-[200px] overflow-y-auto space-y-0.5 pr-0.5">
+                      {searchableCountryOptions.map((c) => {
+                        const selected = country === c;
+                        return (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => {
+                              setCountry(c);
+                              setCountryDropdownOpen(false);
+                              setCountrySearch('');
+                            }}
+                            data-testid={`brand-country-option-${c}`}
+                            className={`flex w-full items-center justify-between rounded-[var(--theme-radius-control)] px-2.5 py-1.5 text-left text-xs transition cursor-pointer ${
+                              selected
+                                ? 'bg-accent text-accent-fg font-bold'
+                                : 'text-ink hover:bg-surface-muted'
+                            }`}
+                          >
+                            <span className="truncate">{c}</span>
+                            {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                          </button>
+                        );
+                      })}
+                      {countrySearch.trim() &&
+                        !searchableCountryOptions.some(
+                          (c) => c.toLowerCase() === countrySearch.trim().toLowerCase()
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCountry(countrySearch.trim());
+                              setCountryDropdownOpen(false);
+                              setCountrySearch('');
+                            }}
+                            className="flex w-full items-center justify-between rounded-[var(--theme-radius-control)] bg-accent-soft/30 px-2.5 py-1.5 text-left text-xs font-bold text-ink cursor-pointer"
+                          >
+                            <span>Use &ldquo;{countrySearch.trim()}&rdquo;</span>
+                            <Plus className="h-3.5 w-3.5 text-accent" />
+                          </button>
+                        )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="space-y-1">
                 <label className="block text-xs font-semibold text-ink">Official Website</label>

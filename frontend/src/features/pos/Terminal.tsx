@@ -49,7 +49,7 @@ import { formatDisplayLabel } from '@/lib/formatLabel';
 import { confirmDestructiveAction } from '@/lib/swal';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
 import { useT } from '@/store/i18nStore';
-import { buildCartLineKey, usePOSStore, type CartItem } from '@/store/posStore';
+import { buildCartLineKey, parseSerialImeiList, usePOSStore, type CartItem } from '@/store/posStore';
 import { useCurrency } from '@/hooks/useCurrency';
 import { toast } from 'sonner';
 import {
@@ -411,7 +411,8 @@ export function Terminal({
   );
 
   const addProductWithCheck = React.useCallback(
-    (product: LocalProduct, itemMeta?: CartItemMeta) => {
+    (product: LocalProduct, itemMeta?: CartItemMeta, qtyDelta = 1) => {
+      const addCount = qtyDelta > 0 ? qtyDelta : 1;
       if (!product.is_service_labor) {
         const stockStr = product.branch_stock || '0';
         const uomFactor = itemMeta?.uom_factor ? String(itemMeta.uom_factor) : '1';
@@ -422,13 +423,13 @@ export function Terminal({
             currentBaseUnits = addDecimal(currentBaseUnits, mulDecimal(line.qty, f));
           }
         }
-        const neededBaseUnits = addDecimal(currentBaseUnits, uomFactor);
+        const neededBaseUnits = addDecimal(currentBaseUnits, mulDecimal(uomFactor, addCount));
         if (!isNegativeAllowedForProduct(product) && cmpDecimal(neededBaseUnits, stockStr) > 0) {
           toast.error(`Insufficient branch FIFO stock for ${product.name} (${stockStr} available)`);
           return;
         }
       }
-      pos.addItem(product, itemMeta, 1);
+      pos.addItem(product, itemMeta, addCount);
     },
     [pos, isNegativeAllowedForProduct],
   );
@@ -488,6 +489,16 @@ export function Terminal({
       if (!ok) return;
       pos.removeItem(lineKey);
       return;
+    }
+    const nextQty = currentQty - step;
+    const line = pos.items.find((i) => i.lineKey === lineKey);
+    if (line?.product.enable_serial_tracking && line.itemMeta?.serial_imei) {
+      const existingImeis = parseSerialImeiList(line.itemMeta.serial_imei);
+      if (existingImeis.length > nextQty) {
+        pos.setItemMeta(lineKey, {
+          serial_imei: existingImeis.slice(0, Math.max(1, Math.round(nextQty))).join(', '),
+        });
+      }
     }
     pos.updateQty(lineKey, -step);
   };
@@ -872,12 +883,18 @@ export function Terminal({
       return;
     }
     if (capabilities.requireSerialImei) {
-      const missingSerial = pos.items.find(
-        (i) => i.product.enable_serial_tracking && !i.itemMeta?.serial_imei?.trim(),
-      );
-      if (missingSerial) {
-        toast.error(`Missing IMEI / serial number for ${missingSerial.product.name}`);
-        return;
+      for (const item of pos.items) {
+        if (!item.product.enable_serial_tracking) continue;
+        const imeis = parseSerialImeiList(item.itemMeta?.serial_imei);
+        const requiredCount = Math.max(1, Math.round(item.qty));
+        if (imeis.length < requiredCount || imeis.some((s) => s.length < 6)) {
+          toast.error(
+            requiredCount > 1
+              ? `Please enter all ${requiredCount} IMEI / serial numbers for ${item.product.name} (${imeis.length}/${requiredCount} captured)`
+              : `Missing IMEI / serial number for ${item.product.name}`,
+          );
+          return;
+        }
       }
     }
 

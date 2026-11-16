@@ -48,7 +48,7 @@ export interface ProductGridProps {
   bundlesOnly: boolean;
   onToggleBundlesOnly: () => void;
   onResetFilters: () => void;
-  onAddToCart: (product: LocalProduct, meta?: CartItemMeta) => void;
+  onAddToCart: (product: LocalProduct, meta?: CartItemMeta, qty?: number) => void;
   onDecrementProduct: (productId: string) => void;
   formatMoney: (value: string | number) => string;
 }
@@ -545,7 +545,7 @@ export function ProductGrid({
         onOpenChange={(o) => !o && setConfiguringProduct(null)}
         capabilities={capabilities}
         formatMoney={formatMoney}
-        onConfirmAdd={(prod, meta) => onAddToCart(prod, meta)}
+        onConfirmAdd={(prod, meta, qty) => onAddToCart(prod, meta, qty)}
       />
 
       <ProductImagePreviewDialog

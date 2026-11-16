@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Barcode, Check, ShieldCheck, Sparkles, UtensilsCrossed } from 'lucide-react';
+import { Barcode, Check, Minus, Plus, ShieldCheck, Sparkles, Trash2, UtensilsCrossed } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,7 @@ export interface ProductConfigureDialogProps {
   onOpenChange: (open: boolean) => void;
   capabilities: POSCapabilities;
   formatMoney: (value: string | number) => string;
-  onConfirmAdd: (product: LocalProduct, meta: CartItemMeta) => void;
+  onConfirmAdd: (product: LocalProduct, meta: CartItemMeta, qty?: number) => void;
 }
 
 function getVariantLabel(v: ProductVariantOption): string {
@@ -56,7 +56,7 @@ export function ProductConfigureDialog({
 
   const [selectedVariant, setSelectedVariant] = React.useState<string>('');
   const [selectedModifiers, setSelectedModifiers] = React.useState<string[]>([]);
-  const [serialImei, setSerialImei] = React.useState('');
+  const [serialImeis, setSerialImeis] = React.useState<string[]>(['']);
   const [itemNote, setItemNote] = React.useState('');
   const [imeiError, setImeiError] = React.useState('');
 
@@ -64,7 +64,7 @@ export function ProductConfigureDialog({
     if (!open || !product) return;
     setSelectedVariant(variants.length > 0 ? getVariantLabel(variants[0]) : '');
     setSelectedModifiers([]);
-    setSerialImei('');
+    setSerialImeis(['']);
     setItemNote('');
     setImeiError('');
   }, [open, product, variants]);
@@ -74,6 +74,7 @@ export function ProductConfigureDialog({
   const needsVariant = capabilities.matrixVariants && variants.length > 0;
   const needsSerial = capabilities.requireSerialImei && Boolean(product.enable_serial_tracking);
   const hasModifiers = modifiers.length > 0 || capabilities.enableKot;
+  const maxStock = Math.max(1, Number(product.branch_stock || 99));
 
   const toggleModifier = (mod: string) => {
     setSelectedModifiers((prev) =>
@@ -81,23 +82,56 @@ export function ProductConfigureDialog({
     );
   };
 
+  const handleSetDeviceCount = (nextCount: number) => {
+    const clamped = Math.min(maxStock, Math.max(1, nextCount));
+    setSerialImeis((prev) => {
+      if (clamped === prev.length) return prev;
+      if (clamped < prev.length) return prev.slice(0, clamped);
+      return [...prev, ...Array(clamped - prev.length).fill('')];
+    });
+    if (imeiError) setImeiError('');
+  };
+
+  const handleUpdateImeiAt = (index: number, val: string) => {
+    setSerialImeis((prev) => prev.map((item, i) => (i === index ? val : item)));
+    if (imeiError) setImeiError('');
+  };
+
+  const handleRemoveImeiAt = (index: number) => {
+    setSerialImeis((prev) => (prev.length <= 1 ? [''] : prev.filter((_, i) => i !== index)));
+    if (imeiError) setImeiError('');
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (needsSerial) {
-      const cleanImei = serialImei.trim();
-      if (cleanImei.length < 6) {
-        setImeiError('Enter or scan a valid IMEI / Serial number (minimum 6 characters).');
-        return;
-      }
-    }
-
+    let finalQty = 1;
     const meta: CartItemMeta = {};
     if (needsVariant && selectedVariant) meta.variant = selectedVariant;
     if (selectedModifiers.length > 0) meta.modifiers = selectedModifiers;
-    if (needsSerial && serialImei.trim()) meta.serial_imei = serialImei.trim();
+
+    if (needsSerial) {
+      const cleaned = serialImeis.map((s) => s.trim());
+      const missingIdx = cleaned.findIndex((s) => s.length < 6);
+      if (missingIdx >= 0) {
+        setImeiError(
+          cleaned.length > 1
+            ? `Device #${missingIdx + 1}: Enter or scan a valid IMEI / Serial number (minimum 6 characters).`
+            : 'Enter or scan a valid IMEI / Serial number (minimum 6 characters).'
+        );
+        return;
+      }
+      const uniqueSet = new Set(cleaned.map((s) => s.toUpperCase()));
+      if (uniqueSet.size !== cleaned.length) {
+        setImeiError('Duplicate IMEI / Serial numbers detected. Each device must have a unique IMEI.');
+        return;
+      }
+      meta.serial_imei = cleaned.join(', ');
+      finalQty = cleaned.length;
+    }
+
     if (itemNote.trim()) meta.notes = itemNote.trim();
 
-    onConfirmAdd(product, meta);
+    onConfirmAdd(product, meta, finalQty);
     onOpenChange(false);
   };
 
@@ -192,33 +226,106 @@ export function ProductConfigureDialog({
           )}
 
           {needsSerial && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <label
-                  htmlFor="pos-serial-imei-input"
-                  className="text-[11px] font-bold uppercase tracking-wider text-ink-muted"
-                >
-                  Mandatory IMEI / Serial Number *
-                </label>
-                {product.warranty_terms && (
-                  <Badge variant="lavender" className="text-[10px]">
-                    <ShieldCheck className="mr-1 h-3 w-3" />
-                    {product.warranty_terms}
-                  </Badge>
-                )}
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <label
+                    htmlFor="pos-serial-imei-input"
+                    className="text-[11px] font-bold uppercase tracking-wider text-ink-muted"
+                  >
+                    Mandatory IMEI / Serial Number ({serialImeis.length}{' '}
+                    {serialImeis.length === 1 ? 'Device' : 'Devices'}) *
+                  </label>
+                  <p className="text-[10px] text-ink-muted">
+                    Buying multiple units of this model? Increase qty to scan each unit&apos;s unique IMEI.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {product.warranty_terms && (
+                    <Badge variant="lavender" className="text-[10px]">
+                      <ShieldCheck className="mr-1 h-3 w-3" />
+                      {product.warranty_terms}
+                    </Badge>
+                  )}
+                  <div className="inline-flex items-center gap-1 rounded-[10px] border border-border-theme bg-[#F5F6FA] p-0.5">
+                    <button
+                      type="button"
+                      aria-label="Decrease device count"
+                      onClick={() => handleSetDeviceCount(serialImeis.length - 1)}
+                      data-testid="pos-imei-qty-minus"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] bg-white text-[#222026] hover:text-accent cursor-pointer"
+                    >
+                      <Minus className="h-3 w-3" />
+                    </button>
+                    <span
+                      className="px-2 text-xs font-extrabold text-[#222026] tabular-nums"
+                      data-testid="pos-imei-qty-count"
+                    >
+                      {serialImeis.length}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Increase device count"
+                      onClick={() => handleSetDeviceCount(serialImeis.length + 1)}
+                      data-testid="pos-imei-qty-plus"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-[7px] bg-white text-[#222026] hover:text-accent cursor-pointer"
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <Input
-                id="pos-serial-imei-input"
-                data-testid="pos-imei-input"
-                autoFocus
-                value={serialImei}
-                onChange={(e) => {
-                  setSerialImei(e.target.value);
-                  if (imeiError) setImeiError('');
-                }}
-                placeholder="Scan or type 15-digit IMEI / device serial..."
-                className="h-11 rounded-[12px] font-mono text-[13px]"
-              />
+
+              <div className="max-h-[190px] overflow-y-auto space-y-2 pr-0.5">
+                {serialImeis.map((val, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    {serialImeis.length > 1 && (
+                      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-[#F5F6FA] font-mono text-[10.5px] font-bold text-[#222026]">
+                        #{idx + 1}
+                      </span>
+                    )}
+                    <Input
+                      id={idx === 0 ? 'pos-serial-imei-input' : `pos-serial-imei-input-${idx}`}
+                      data-testid={idx === 0 ? 'pos-imei-input' : `pos-imei-input-${idx}`}
+                      autoFocus={idx === serialImeis.length - 1}
+                      value={val}
+                      onChange={(e) => handleUpdateImeiAt(idx, e.target.value)}
+                      placeholder={
+                        serialImeis.length > 1
+                          ? `Device #${idx + 1}: Scan or type 15-digit IMEI / serial...`
+                          : 'Scan or type 15-digit IMEI / device serial...'
+                      }
+                      className="h-10 flex-1 rounded-[12px] font-mono text-[12.5px]"
+                    />
+                    {serialImeis.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveImeiAt(idx)}
+                        aria-label={`Remove device #${idx + 1}`}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-border-theme text-ink-muted hover:text-red-500 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => handleSetDeviceCount(serialImeis.length + 1)}
+                  data-testid="pos-add-another-imei-btn"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-accent hover:underline cursor-pointer"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add another unit of {product.name}
+                </button>
+                <span className="text-[10.5px] font-semibold text-ink-muted tabular-nums">
+                  Total: {formatMoney(Number(product.sale_price || 0) * serialImeis.length)}
+                </span>
+              </div>
+
               {imeiError && (
                 <p data-testid="pos-imei-error" className="text-[11px] font-semibold text-[#EF4444]">
                   {imeiError}
@@ -227,19 +334,23 @@ export function ProductConfigureDialog({
             </div>
           )}
 
-          {(hasModifiers || capabilities.enableKot) && (
+          {(hasModifiers || capabilities.enableKot || needsSerial) && (
             <div className="space-y-1.5">
               <label
                 htmlFor="pos-item-note-input"
                 className="text-[11px] font-bold uppercase tracking-wider text-ink-muted"
               >
-                Preparation / Ticket Note
+                {needsSerial ? 'Warranty / Device Condition Note' : 'Preparation / Ticket Note'}
               </label>
               <Input
                 id="pos-item-note-input"
                 value={itemNote}
                 onChange={(e) => setItemNote(e.target.value)}
-                placeholder="e.g., No ice, less spicy, gift wrapped..."
+                placeholder={
+                  needsSerial
+                    ? 'e.g., Sealed box, TRCSL verified, customer trade-in ref...'
+                    : 'e.g., No ice, less spicy, gift wrapped...'
+                }
                 className="h-10 rounded-[12px] text-[12px]"
               />
             </div>

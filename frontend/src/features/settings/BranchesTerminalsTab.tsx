@@ -53,6 +53,7 @@ import { DynamicButton } from '@/components/dqnamo/DynamicButton';
 import { apiFetch } from '@/lib/api';
 import {
   BRANCH_COUNTRY_OPTIONS,
+  hasMultiBranchAccess,
   isMultiBranchRole,
   resolveCountryNameFromCode,
 } from '@/lib/branchAccess';
@@ -102,8 +103,9 @@ interface TerminalsListResponse {
 
 export function BranchesTerminalsTab() {
   const queryClient = useQueryClient();
-  const { context, terminals, setSession } = useAuthStore();
-  const canMultiBranch = isMultiBranchRole(context?.role_code);
+  const { context, branches, terminals, setSession } = useAuthStore();
+  const isOwnerRole = isMultiBranchRole(context?.role_code);
+  const canMultiBranch = hasMultiBranchAccess(context, branches.length);
 
   const [branchSearch, setBranchSearch] = React.useState('');
   const [branchCountryFilter, setBranchCountryFilter] = React.useState('ALL');
@@ -117,7 +119,9 @@ export function BranchesTerminalsTab() {
   const [editingBranch, setEditingBranch] = React.useState<BranchManagementRow | null>(null);
   const [branchCode, setBranchCode] = React.useState('');
   const [branchName, setBranchName] = React.useState('');
+  const [branchNameError, setBranchNameError] = React.useState('');
   const [countryCode, setCountryCode] = React.useState('LK');
+  const [countrySearch, setCountrySearch] = React.useState('');
   const [branchCity, setBranchCity] = React.useState('');
   const [branchAddress, setBranchAddress] = React.useState('');
   const [isWarehouse, setIsWarehouse] = React.useState(false);
@@ -135,6 +139,7 @@ export function BranchesTerminalsTab() {
   const [termName, setTermName] = React.useState('');
   const [termSerial, setTermSerial] = React.useState('');
   const [termActive, setTermActive] = React.useState(true);
+  const [termErrors, setTermErrors] = React.useState<{ branch?: string; name?: string; code?: string }>({});
   const [savingTerminal, setSavingTerminal] = React.useState(false);
   const [switchingKey, setSwitchingKey] = React.useState('');
 
@@ -158,8 +163,8 @@ export function BranchesTerminalsTab() {
 
   const branchRows = branchesResp?.branches || [];
   const terminalRows = terminalsResp?.terminals || [];
-  const canManageBranches = Boolean(canMultiBranch && (branchesResp?.can_manage_branches ?? true));
-  const canManageTerminals = Boolean(canMultiBranch && (terminalsResp?.can_manage_terminals ?? true));
+  const canManageBranches = Boolean(isOwnerRole && (branchesResp?.can_manage_branches ?? true));
+  const canManageTerminals = Boolean(isOwnerRole && (terminalsResp?.can_manage_terminals ?? true));
 
   const syncWorkspaceSession = async (targetBranchId?: string, targetTerminalId?: string) => {
     if (!context?.business_id) return;
@@ -193,7 +198,9 @@ export function BranchesTerminalsTab() {
     setEditingBranch(null);
     setBranchCode('');
     setBranchName('');
+    setBranchNameError('');
     setCountryCode('LK');
+    setCountrySearch('');
     setBranchCity('');
     setBranchAddress('');
     setIsWarehouse(false);
@@ -208,7 +215,9 @@ export function BranchesTerminalsTab() {
     setEditingBranch(b);
     setBranchCode(b.code);
     setBranchName(b.name);
+    setBranchNameError('');
     setCountryCode(b.country_code || 'LK');
+    setCountrySearch('');
     setBranchCity(b.city || '');
     setBranchAddress(b.address || '');
     setIsWarehouse(b.is_warehouse);
@@ -238,6 +247,7 @@ export function BranchesTerminalsTab() {
     setTermName(matchedBranch ? `${matchedBranch.name} POS #${padded}` : '');
     setTermSerial(autoCode ? `ZPRO-${autoCode}` : '');
     setTermActive(true);
+    setTermErrors({});
     setTerminalModalOpen(true);
   };
 
@@ -248,15 +258,18 @@ export function BranchesTerminalsTab() {
     setTermName(t.name);
     setTermSerial(t.hardware_serial || '');
     setTermActive(t.is_active);
+    setTermErrors({});
     setTerminalModalOpen(true);
   };
 
   const handleSaveBranch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!branchName.trim()) {
+      setBranchNameError('Branch name is required');
       toast.error('Branch name is required');
       return;
     }
+    setBranchNameError('');
     setSavingBranch(true);
     try {
       const payload = {
@@ -299,14 +312,22 @@ export function BranchesTerminalsTab() {
 
   const handleSaveTerminal = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errs: { branch?: string; name?: string; code?: string } = {};
     if (!termBranchId) {
-      toast.error('Select an assigned branch for this terminal');
+      errs.branch = 'Assigned branch is required';
+    }
+    if (!termName.trim()) {
+      errs.name = 'Terminal name is required';
+    }
+    if (!termCode.trim()) {
+      errs.code = 'Terminal code is required';
+    }
+    if (Object.keys(errs).length > 0) {
+      setTermErrors(errs);
+      toast.error(errs.branch || errs.name || errs.code || 'Please complete required terminal fields');
       return;
     }
-    if (!termName.trim() || !termCode.trim()) {
-      toast.error('Terminal code and name are required');
-      return;
-    }
+    setTermErrors({});
     setSavingTerminal(true);
     try {
       const payload = {
@@ -952,16 +973,25 @@ export function BranchesTerminalsTab() {
               Provision a store location with an automatically linked FIFO warehouse and optional starter POS terminal.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSaveBranch} className="space-y-3.5">
+          <form onSubmit={handleSaveBranch} noValidate className="space-y-3.5">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold text-ink">Branch Name *</label>
                 <Input
                   value={branchName}
-                  onChange={(e) => setBranchName(e.target.value)}
+                  onChange={(e) => {
+                    setBranchName(e.target.value);
+                    if (branchNameError) setBranchNameError('');
+                  }}
                   placeholder="Kandy Flagship Store"
+                  aria-invalid={Boolean(branchNameError)}
                   data-testid="branch-name-input"
                 />
+                {branchNameError && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="branch-name-error">
+                    {branchNameError}
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold text-ink">Branch Code</label>
@@ -983,7 +1013,21 @@ export function BranchesTerminalsTab() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {BRANCH_COUNTRY_OPTIONS.map((c) => (
+                    <div className="p-1.5 border-b border-border-theme">
+                      <Input
+                        value={countrySearch}
+                        onChange={(e) => setCountrySearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        placeholder="Search country..."
+                        className="h-7 text-xs"
+                        data-testid="branch-country-search"
+                      />
+                    </div>
+                    {BRANCH_COUNTRY_OPTIONS.filter((c) => {
+                      const q = countrySearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q);
+                    }).map((c) => (
                       <SelectItem key={c.code} value={c.code}>
                         {c.name} ({c.code})
                       </SelectItem>
@@ -1094,10 +1138,16 @@ export function BranchesTerminalsTab() {
               Register a cashier checkout station and bind it to one specific store branch.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSaveTerminal} className="space-y-3.5">
+          <form onSubmit={handleSaveTerminal} noValidate className="space-y-3.5">
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-ink">Assigned Branch *</label>
-              <Select value={termBranchId} onValueChange={setTermBranchId}>
+              <Select
+                value={termBranchId}
+                onValueChange={(val) => {
+                  setTermBranchId(val);
+                  if (termErrors.branch) setTermErrors((prev) => ({ ...prev, branch: undefined }));
+                }}
+              >
                 <SelectTrigger data-testid="terminal-branch-select">
                   <SelectValue placeholder="Select Branch" />
                 </SelectTrigger>
@@ -1109,6 +1159,11 @@ export function BranchesTerminalsTab() {
                   ))}
                 </SelectContent>
               </Select>
+              {termErrors.branch && (
+                <p className="text-[11px] font-medium text-red-500" data-testid="terminal-branch-error">
+                  {termErrors.branch}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1116,20 +1171,38 @@ export function BranchesTerminalsTab() {
                 <label className="text-[11px] font-semibold text-ink">Terminal Name *</label>
                 <Input
                   value={termName}
-                  onChange={(e) => setTermName(e.target.value)}
+                  onChange={(e) => {
+                    setTermName(e.target.value);
+                    if (termErrors.name) setTermErrors((prev) => ({ ...prev, name: undefined }));
+                  }}
                   placeholder="Front Desk POS #02"
+                  aria-invalid={Boolean(termErrors.name)}
                   data-testid="terminal-name-input"
                 />
+                {termErrors.name && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="terminal-name-error">
+                    {termErrors.name}
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold text-ink">Terminal Code *</label>
                 <Input
                   value={termCode}
-                  onChange={(e) => setTermCode(e.target.value.toUpperCase())}
+                  onChange={(e) => {
+                    setTermCode(e.target.value.toUpperCase());
+                    if (termErrors.code) setTermErrors((prev) => ({ ...prev, code: undefined }));
+                  }}
                   placeholder="KND-POS02"
                   className="font-mono uppercase"
+                  aria-invalid={Boolean(termErrors.code)}
                   data-testid="terminal-code-input"
                 />
+                {termErrors.code && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="terminal-code-error">
+                    {termErrors.code}
+                  </p>
+                )}
               </div>
             </div>
 

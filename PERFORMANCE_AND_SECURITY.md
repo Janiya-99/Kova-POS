@@ -173,3 +173,4 @@ All `11` security and database-invariant probes in `cmd/verify-kova` passed with
 | **9** | **DB Trigger `trg_prevent_locked_period_posting`** | Attempt to insert a backdated journal entry (`2023-02-15`) into locked fiscal period `FY2023-Q1` | Rejected by PostgreSQL trigger: `ERROR: Cannot post journal entry JE-TEST-LOCKED to locked fiscal period ... (SQLSTATE P0001)` | **PASS** |
 | **10** | **DB Trigger `trg_immutable_stock_ledger_entries`** | Attempt `UPDATE stock_ledger_entries SET quantity_change = 9999` on an existing audit row | Rejected by PostgreSQL trigger: `ERROR: stock_ledger_entries is immutable and cannot be updated or deleted (SQLSTATE P0001)` | **PASS** |
 | **11** | **Brute-Force Login Rate Limiter (`auth_login`)** | Fire rapid invalid login attempts from a test IP against `POST /api/v1/auth/login` | Throttled with `HTTP 429 Too Many Requests` (`triggered_on_attempt = 10`, `Retry-After = 60s`) | **PASS** |
+
