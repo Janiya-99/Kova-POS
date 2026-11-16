@@ -4,7 +4,12 @@ import { Badge } from '@/components/ui/badge';
 import { SegmentedCapsuleBar } from '@/components/charts/ModernCharts';
 import { useCurrency } from '@/hooks/useCurrency';
 import { useThemeStore, getThemeDefinition } from '@/store/themeStore';
+import {
+  resolveCategorySegmentDisplay,
+  resolveEffectiveIndustryProfile,
+} from '@/lib/branchAccess';
 import { formatDisplayLabel } from '@/lib/formatLabel';
+import { useAuthStore } from '@/store/authStore';
 import type { CategoryMixItem } from '../types';
 
 interface CategoryMixCardProps {
@@ -19,6 +24,8 @@ export function CategoryMixCard({
   hideRevenue = false,
 }: CategoryMixCardProps) {
   const { formatMoney } = useCurrency();
+  const { context, resolvedSettings, businesses } = useAuthStore();
+  const industryProfile = resolveEffectiveIndustryProfile(context, resolvedSettings, businesses);
   const { themeId, customAccent, colorMode } = useThemeStore();
   const theme = getThemeDefinition(themeId);
   const accentHex = customAccent || theme.tokens['--theme-accent'];
@@ -103,7 +110,13 @@ export function CategoryMixCard({
                       />
                       <span className="truncate font-bold text-ink">{item.category_name}</span>
                       <Badge variant="outline" className="text-[9.5px] px-1.5 py-0">
-                        {formatDisplayLabel(item.gender_segment)}
+                        {formatDisplayLabel(
+                          resolveCategorySegmentDisplay(
+                            item.gender_segment,
+                            item.category_name,
+                            industryProfile
+                          )
+                        )}
                       </Badge>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 tabular-nums">

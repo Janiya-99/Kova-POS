@@ -37,7 +37,12 @@ import {
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
 import { confirmDestructiveAction } from '@/lib/swal';
 import { apiFetch } from '@/lib/api';
-import { getIndustryCategorySegments, resolveCategorySegmentDisplay } from '@/lib/branchAccess';
+import {
+  getIndustryCategoryPlaceholders,
+  getIndustryCategorySegments,
+  resolveCategorySegmentDisplay,
+  resolveEffectiveIndustryProfile,
+} from '@/lib/branchAccess';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from 'sonner';
 
@@ -53,11 +58,16 @@ interface CategoryRecord {
 }
 
 export function CategoriesPage() {
-  const { context } = useAuthStore();
+  const { context, resolvedSettings, businesses } = useAuthStore();
   const queryClient = useQueryClient();
+  const industryProfile = resolveEffectiveIndustryProfile(context, resolvedSettings, businesses);
   const segmentConfig = React.useMemo(
-    () => getIndustryCategorySegments(context?.industry_profile),
-    [context?.industry_profile]
+    () => getIndustryCategorySegments(industryProfile),
+    [industryProfile]
+  );
+  const placeholders = React.useMemo(
+    () => getIndustryCategoryPlaceholders(industryProfile),
+    [industryProfile]
   );
 
   const [search, setSearch] = React.useState('');
@@ -69,6 +79,12 @@ export function CategoriesPage() {
   const [slug, setSlug] = React.useState('');
   const [segment, setSegment] = React.useState<string>(segmentConfig.defaultSegment);
   const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!editing && !modalOpen) {
+      setSegment(segmentConfig.defaultSegment);
+    }
+  }, [segmentConfig.defaultSegment, editing, modalOpen]);
 
   const { data, isLoading } = useQuery({
     queryKey: ['categories', context?.business_id],
@@ -91,7 +107,7 @@ export function CategoriesPage() {
     setNameError('');
     setSlug(cat.slug);
     setSegment(
-      resolveCategorySegmentDisplay(cat.gender_segment, cat.slug, context?.industry_profile)
+      resolveCategorySegmentDisplay(cat.gender_segment, cat.slug, industryProfile)
     );
     setModalOpen(true);
   };
@@ -153,10 +169,10 @@ export function CategoriesPage() {
         gender_segment: resolveCategorySegmentDisplay(
           c.gender_segment,
           c.slug,
-          context?.industry_profile
+          industryProfile
         ),
       })),
-    [data?.categories, context?.industry_profile]
+    [data?.categories, industryProfile]
   );
   const filtered = React.useMemo(
     () =>
@@ -395,7 +411,7 @@ export function CategoriesPage() {
                     );
                   }
                 }}
-                placeholder="e.g., Flagship Smartphones"
+                placeholder={placeholders.namePlaceholder}
                 aria-invalid={Boolean(nameError)}
                 data-testid="category-name-input"
               />
@@ -411,7 +427,7 @@ export function CategoriesPage() {
               <Input
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
-                placeholder="flagship-smartphones"
+                placeholder={placeholders.slugPlaceholder}
               />
             </div>
 

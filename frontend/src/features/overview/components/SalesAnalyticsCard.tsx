@@ -2,6 +2,8 @@ import * as React from 'react';
 import { TrendingUp } from 'lucide-react';
 import { GlowingDotMatrixChart, type DotMatrixDatum } from '@/components/charts/ModernCharts';
 import { useCurrency } from '@/hooks/useCurrency';
+import { resolveEffectiveIndustryProfile } from '@/lib/branchAccess';
+import { useAuthStore } from '@/store/authStore';
 import { useThemeStore, getThemeDefinition } from '@/store/themeStore';
 import type { OverviewPeriod, OverviewRolePersona, SalesAnalyticsPoint } from '../types';
 
@@ -24,6 +26,8 @@ export function SalesAnalyticsCard({
   canViewTaxDetail = false,
 }: SalesAnalyticsCardProps) {
   const { formatMoney } = useCurrency();
+  const { context, resolvedSettings, businesses } = useAuthStore();
+  const industryProfile = resolveEffectiveIndustryProfile(context, resolvedSettings, businesses);
   const { themeId, customAccent, colorMode } = useThemeStore();
   const theme = getThemeDefinition(themeId);
   const accentHex = customAccent || theme.tokens['--theme-accent'];
@@ -67,10 +71,13 @@ export function SalesAnalyticsCard({
         return {
           label: point.label,
           primaryValue: unitsTotal,
-          secondaryValue: Number(point.women || 0),
+          secondaryValue: industryProfile === 'retail' ? Number(point.women || 0) : Number(point.orders || 0),
           tertiaryValue: Number(point.returned || 0),
           primaryFormatted: `${unitsTotal} pcs`,
-          secondaryFormatted: `W:${point.women || 0} M:${point.men || 0}`,
+          secondaryFormatted:
+            industryProfile === 'retail'
+              ? `W:${point.women || 0} M:${point.men || 0}`
+              : `${point.orders || 0} orders`,
           tertiaryFormatted: `${point.returned || 0} ret`,
         };
       }
@@ -87,7 +94,7 @@ export function SalesAnalyticsCard({
         tertiaryFormatted: formatMoney(taxes),
       };
     });
-  }, [data, mode, formatMoney]);
+  }, [data, mode, formatMoney, industryProfile]);
 
   const summary = React.useMemo(() => {
     const totalRev = data.reduce((s, d) => s + Number(d.revenue || 0), 0);
@@ -196,7 +203,7 @@ export function SalesAnalyticsCard({
         data={matrixData}
         rows={7}
         primaryLabel={mode === 'revenue' ? 'Revenue' : mode === 'units' ? 'Sold' : 'Revenue'}
-        secondaryLabel={mode === 'revenue' ? 'Orders' : mode === 'units' ? 'Mix' : 'Profit'}
+        secondaryLabel={mode === 'revenue' ? 'Orders' : mode === 'units' ? (industryProfile === 'retail' ? 'Mix' : 'Orders') : 'Profit'}
         tertiaryLabel={mode === 'financial' && canViewTaxDetail ? 'Tax' : undefined}
         primaryColor={accentHex}
         secondaryColor={secondaryHex}

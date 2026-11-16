@@ -128,7 +128,7 @@ const ROUTE_META: Record<AppRoute, { title: string; subtitle: string }> = {
   },
   '/categories': {
     title: 'Product Categories',
-    subtitle: 'Menu taxonomy, merchandising segments & category inheritance',
+    subtitle: 'Category taxonomy, industry segments & tax inheritance',
   },
   '/brands': {
     title: 'Brands & Manufacturers',

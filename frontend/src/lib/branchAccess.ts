@@ -173,7 +173,13 @@ export function resolveCategorySegmentDisplay(
   if (mode === 'retail') {
     return seg || 'Unisex';
   }
-  if (!seg || seg.toLowerCase() === 'unisex' || seg.toLowerCase() === 'general') {
+  if (
+    !seg ||
+    seg.toLowerCase() === 'unisex' ||
+    seg.toLowerCase() === 'general' ||
+    seg.toLowerCase() === 'men' ||
+    seg.toLowerCase() === 'women'
+  ) {
     const slug = (categorySlug || '').toLowerCase();
     if (mode === 'mobile') {
       if (slug.includes('phone') || slug.includes('tablet') || slug.includes('fold')) {
@@ -193,5 +199,337 @@ export function resolveCategorySegmentDisplay(
     return getIndustryCategorySegments(mode).defaultSegment;
   }
   return seg;
+}
+
+/**
+ * Resolves the active business vertical reliably across JWT context, resolved settings, and cached companies.
+ */
+export function resolveEffectiveIndustryProfile(
+  context?: TenantContext | null,
+  resolvedSettings?: Record<string, string>,
+  businesses?: Array<{ id?: string; business_id?: string; industry_profile?: string }>
+): string {
+  const fromSetting = (resolvedSettings?.['pos.ui.layout_mode'] || '').trim().toLowerCase();
+  const fromCtx = (context?.industry_profile || '').trim().toLowerCase();
+  const fromBiz = (
+    businesses?.find((b) => (b.business_id || b.id) === context?.business_id)?.industry_profile || ''
+  )
+    .trim()
+    .toLowerCase();
+  return fromSetting || fromCtx || fromBiz || 'retail';
+}
+
+export function getIndustryCategoryPlaceholders(industryProfile?: string | null): {
+  namePlaceholder: string;
+  slugPlaceholder: string;
+} {
+  const mode = (industryProfile || 'retail').trim().toLowerCase();
+  switch (mode) {
+    case 'mobile':
+      return { namePlaceholder: 'e.g., Flagship Smartphones', slugPlaceholder: 'flagship-smartphones' };
+    case 'restaurant':
+      return { namePlaceholder: 'e.g., Wood-Fired Pizzas', slugPlaceholder: 'wood-fired-pizzas' };
+    case 'hardware':
+      return { namePlaceholder: 'e.g., Cordless Power Tools', slugPlaceholder: 'cordless-power-tools' };
+    case 'garage':
+      return { namePlaceholder: 'e.g., Synthetic Motor Oils', slugPlaceholder: 'synthetic-motor-oils' };
+    case 'stationery':
+      return { namePlaceholder: 'e.g., Gel Pens & Notebooks', slugPlaceholder: 'gel-pens-notebooks' };
+    default:
+      return { namePlaceholder: 'e.g., Knitwear', slugPlaceholder: 'knitwear' };
+  }
+}
+
+export interface IndustryReturnPresetConfig {
+  mode: string;
+  inventoryTabLabel: string;
+  inventoryActionLabel: string;
+  posButtonLabel: string;
+  posModalTitle: string;
+  posModalDescription: string;
+  captureSerialLabel: string | null;
+  allowFractional: boolean;
+  highlightWastageFirst: boolean;
+  customerReturnReasons: string[];
+  damageReasons: string[];
+  wastageReasons: string[];
+  expiryReasons: string[];
+  supplierReturnReasons: string[];
+  defaultDispositionByType: Record<
+    'DAMAGE' | 'WASTAGE' | 'EXPIRY_WRITEOFF' | 'SUPPLIER_RETURN',
+    'WRITE_OFF_SCRAP' | 'QUARANTINE_DAMAGED' | 'RETURN_TO_SUPPLIER'
+  >;
+}
+
+/**
+ * Provides vertical-adapted classification, terminology, and reason presets for
+ * Returns, Damages, Wastages, Expiry Write-Offs, and Supplier RMA/RTV across Inventory & POS.
+ */
+export function getIndustryReturnAndWastagePresets(
+  industryProfile?: string | null
+): IndustryReturnPresetConfig {
+  const mode = (industryProfile || 'retail').trim().toLowerCase();
+  switch (mode) {
+    case 'mobile':
+      return {
+        mode: 'mobile',
+        inventoryTabLabel: 'Returns, DOA & E-Waste',
+        inventoryActionLabel: 'Record Damage / Wastage / RMA',
+        posButtonLabel: 'Returns / DOA',
+        posModalTitle: 'Customer Return, DOA & Warranty Exchange',
+        posModalDescription:
+          'Process full or partial returns, capture device IMEI/serial, and route items to Sellable FIFO, DOA Quarantine, or Scrap Write-Off.',
+        captureSerialLabel: 'IMEI / Device Serial #',
+        allowFractional: false,
+        highlightWastageFirst: false,
+        customerReturnReasons: [
+          'DOA / Factory Hardware Defect',
+          'Warranty Claim Replacement',
+          'Screen / Display Fault',
+          'Battery / Charging Issue',
+          'Unopened Box Exchange',
+          'Carrier / Software Lock Issue',
+        ],
+        damageReasons: [
+          'DOA / Transit Screen Crack',
+          'Water / Moisture / ESD Damage in Store',
+          'Dropped Display / Demo Unit Damage',
+          'Crushed Sealed Retail Packaging',
+        ],
+        wastageReasons: [
+          'Battery Swell / E-Waste Write-Off',
+          'Demo Unit / Cable Wear Write-Off',
+          'Faulty Tempered Glass Installation Wastage',
+        ],
+        expiryReasons: [
+          'Outdated Accessories / Pre-Paid SIM Expiry',
+          'Lithium Cell Shelf-Life Expiry',
+        ],
+        supplierReturnReasons: [
+          'RMA Return to Authorized Distributor',
+          'DOA Sealed Unit Factory Replacement',
+          'Batch Firmware Defect Recall',
+        ],
+        defaultDispositionByType: {
+          DAMAGE: 'QUARANTINE_DAMAGED',
+          WASTAGE: 'WRITE_OFF_SCRAP',
+          EXPIRY_WRITEOFF: 'WRITE_OFF_SCRAP',
+          SUPPLIER_RETURN: 'RETURN_TO_SUPPLIER',
+        },
+      };
+    case 'restaurant':
+      return {
+        mode: 'restaurant',
+        inventoryTabLabel: 'Voids, Spoilage & Wastage',
+        inventoryActionLabel: 'Log Kitchen Wastage / Spoilage',
+        posButtonLabel: 'Refund / Remake',
+        posModalTitle: 'Order Refund, Kitchen Remake & Food Wastage',
+        posModalDescription:
+          'Issue guest refunds and automatically log perishable food write-offs vs sealed beverage restocks in Inventory & GL.',
+        captureSerialLabel: null,
+        allowFractional: true,
+        highlightWastageFirst: true,
+        customerReturnReasons: [
+          'Order Remake / Kitchen Error',
+          'Cold or Incorrect Dish Served',
+          'Customer Allergy / Cancellation',
+          'Delivery Spill / Missing Modifier',
+          'Sealed Beverage Return',
+        ],
+        damageReasons: [
+          'Plating Spillage / Glassware Breakage',
+          'Chilled Storage Crushed Packaging',
+          'Damaged Delivery Container Stock',
+        ],
+        wastageReasons: [
+          'Kitchen Prep / Burn Wastage',
+          'Expired Perishable / Spoilage',
+          'End-of-Day Unsold Bakery Write-Off',
+          'Cold-Chain Temperature Breach',
+        ],
+        expiryReasons: [
+          'Expired Dairy / Fresh Produce Spoilage',
+          'Past Use-By Sauce / Pantry Stock',
+        ],
+        supplierReturnReasons: [
+          'Rejected Fresh Produce Delivery (RTV)',
+          'Faulty / Leaking Keg or Beverage Crate',
+        ],
+        defaultDispositionByType: {
+          DAMAGE: 'WRITE_OFF_SCRAP',
+          WASTAGE: 'WRITE_OFF_SCRAP',
+          EXPIRY_WRITEOFF: 'WRITE_OFF_SCRAP',
+          SUPPLIER_RETURN: 'RETURN_TO_SUPPLIER',
+        },
+      };
+    case 'hardware':
+      return {
+        mode: 'hardware',
+        inventoryTabLabel: 'Returns, Yard Damage & Scrap',
+        inventoryActionLabel: 'Record Yard Damage / Cut-Scrap',
+        posButtonLabel: 'Returns / Claims',
+        posModalTitle: 'Contractor Return, Warranty & Cut-Scrap Claim',
+        posModalDescription:
+          'Return unopened site materials to FIFO yard stock or quarantine/write off damaged bags, broken tiles, or faulty power tools.',
+        captureSerialLabel: 'Tool Serial / Batch Code',
+        allowFractional: true,
+        highlightWastageFirst: true,
+        customerReturnReasons: [
+          'Project Over-Order Return (Unopened)',
+          'Wrong Spec / Pipe Thread / Dimension',
+          'Faulty Power Tool Warranty Claim',
+          'Tinted Paint Mix Discrepancy',
+        ],
+        damageReasons: [
+          'Damaged Tile / Sanitaryware Breakage',
+          'Forklift Puncture / Yard Handling Damage',
+          'Rust / Outdoor Weather Exposure Damage',
+        ],
+        wastageReasons: [
+          'Broken Bag / Cement Moisture Spoilage',
+          'Timber / Steel / Cable Cut-Scrap Offcut Wastage',
+          'Spilled Solvent / Adhesive Wastage',
+        ],
+        expiryReasons: [
+          'Expired Epoxy / Cured Cement Bag Write-Off',
+          'Paint Base Shelf-Life Expiry',
+        ],
+        supplierReturnReasons: [
+          'Faulty Tool Distributor RMA Claim',
+          'Defective Pallet / Carton Return to Vendor',
+        ],
+        defaultDispositionByType: {
+          DAMAGE: 'WRITE_OFF_SCRAP',
+          WASTAGE: 'WRITE_OFF_SCRAP',
+          EXPIRY_WRITEOFF: 'WRITE_OFF_SCRAP',
+          SUPPLIER_RETURN: 'RETURN_TO_SUPPLIER',
+        },
+      };
+    case 'garage':
+      return {
+        mode: 'garage',
+        inventoryTabLabel: 'Core Returns, Faults & Fluids',
+        inventoryActionLabel: 'Log Part Damage / Fluid Wastage',
+        posButtonLabel: 'Part Return / Core',
+        posModalTitle: 'Warranty Part Return, Core Exchange & Fluid Claim',
+        posModalDescription:
+          'Process wrong-fitment OEM parts back into FIFO bin stock or log faulty cores, bay damage, and spilled fluids.',
+        captureSerialLabel: 'OEM Part Serial / Vehicle Plate',
+        allowFractional: true,
+        highlightWastageFirst: false,
+        customerReturnReasons: [
+          'Wrong OEM Part Fitment',
+          'Warranty Part Failure / Claim',
+          'Core Return Credit (Battery / Alternator)',
+          'Customer Cancelled Bay Repair',
+        ],
+        damageReasons: [
+          'Damaged Gasket / Filter in Transit',
+          'Scratch / Thread Damage During Bay Fitment',
+          'Cracked Brake Rotor / Lamp Housing',
+        ],
+        wastageReasons: [
+          'Engine Oil / Coolant Spill & Evaporation',
+          'Workshop Brake Cleaner / Grease Wastage',
+          'Contaminated Hydraulic Fluid Write-Off',
+        ],
+        expiryReasons: [
+          'Expired Sealant / Tire Patch Compound',
+          'Aged Lead-Acid Battery Sulphation',
+        ],
+        supplierReturnReasons: [
+          'Defective Core Return to Distributor (RMA)',
+          'Warranty Replacement Claim to OEM Vendor',
+        ],
+        defaultDispositionByType: {
+          DAMAGE: 'QUARANTINE_DAMAGED',
+          WASTAGE: 'WRITE_OFF_SCRAP',
+          EXPIRY_WRITEOFF: 'WRITE_OFF_SCRAP',
+          SUPPLIER_RETURN: 'RETURN_TO_SUPPLIER',
+        },
+      };
+    case 'stationery':
+      return {
+        mode: 'stationery',
+        inventoryTabLabel: 'Returns, Ink Expiry & Damages',
+        inventoryActionLabel: 'Record Damage / Ink Wastage',
+        posButtonLabel: 'Returns / Exchange',
+        posModalTitle: 'Pack Return, Defective Instrument & Wastage',
+        posModalDescription:
+          'Process sealed ream/box returns to FIFO shelves or write off water-damaged paper, dried ink, or defective calculators.',
+        captureSerialLabel: 'Device Serial / Batch Lot',
+        allowFractional: false,
+        highlightWastageFirst: false,
+        customerReturnReasons: [
+          'Pack / Ream Exchange (Unopened)',
+          'Defective Calculator / Instrument',
+          'School Booklist Substitution',
+          'Wrong Ink / Toner Cartridge Model',
+        ],
+        damageReasons: [
+          'Humidity / Water-Damaged Paper Reams',
+          'Torn Blister / Crushed Box Write-Off',
+          'Bent Binder / Display Shelf Damage',
+        ],
+        wastageReasons: [
+          'Print & Binding Misprint Spoilage Wastage',
+          'Opened Sample / Test Marker Dry-Out',
+        ],
+        expiryReasons: [
+          'Dried Ink / Expired Printer Toner Write-Off',
+          'Expired Adhesive / Correction Fluid',
+        ],
+        supplierReturnReasons: [
+          'Vendor Damaged Carton Return (RTV)',
+          'Factory Misprinted Batch Return to Publisher',
+        ],
+        defaultDispositionByType: {
+          DAMAGE: 'WRITE_OFF_SCRAP',
+          WASTAGE: 'WRITE_OFF_SCRAP',
+          EXPIRY_WRITEOFF: 'WRITE_OFF_SCRAP',
+          SUPPLIER_RETURN: 'RETURN_TO_SUPPLIER',
+        },
+      };
+    default:
+      return {
+        mode: 'retail',
+        inventoryTabLabel: 'Returns, Defects & RTV',
+        inventoryActionLabel: 'Record Defect / Shrinkage / RTV',
+        posButtonLabel: 'Returns / Exchange',
+        posModalTitle: 'Customer Return, Size Exchange & Defect Claim',
+        posModalDescription:
+          'Process clean returns back into sellable FIFO inventory or route stained/defective garments to Quarantine or RTV.',
+        captureSerialLabel: null,
+        allowFractional: false,
+        highlightWastageFirst: false,
+        customerReturnReasons: [
+          'Size / Fit Exchange',
+          'Color / Style Preference Return',
+          'Apparel Stitching / Zipper Defect',
+          'Gift Receipt Return',
+          'Wrong Item Packed',
+        ],
+        damageReasons: [
+          'Soiled / Fitting Room Makeup Stain',
+          'Torn Seam / Missing Button Defect',
+          'Display Sun-Fade / Hanger Damage',
+        ],
+        wastageReasons: [
+          'Seasonal Shrinkage Write-Off',
+          'Unrecoverable Fabric Pull / Tear',
+        ],
+        expiryReasons: ['Seasonal Promotional Stock Write-Down'],
+        supplierReturnReasons: [
+          'Return to Vendor (RTV) Manufacturing Claim',
+          'Incorrect Size Assortment Carton Return',
+        ],
+        defaultDispositionByType: {
+          DAMAGE: 'QUARANTINE_DAMAGED',
+          WASTAGE: 'WRITE_OFF_SCRAP',
+          EXPIRY_WRITEOFF: 'WRITE_OFF_SCRAP',
+          SUPPLIER_RETURN: 'RETURN_TO_SUPPLIER',
+        },
+      };
+  }
 }
 

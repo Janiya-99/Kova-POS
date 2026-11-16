@@ -23,6 +23,10 @@ import {
   type SparklinePoint,
 } from '@/components/charts/ModernCharts';
 import { confirmAction } from '@/lib/swal';
+import {
+  resolveCategorySegmentDisplay,
+  resolveEffectiveIndustryProfile,
+} from '@/lib/branchAccess';
 import { formatMetricNumber } from '@/lib/utils';
 import { useCurrency } from '@/hooks/useCurrency';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
@@ -41,11 +45,12 @@ function formatSignedPct(pct: number): string {
 
 export function KPICardsStack({ overview }: KPICardsStackProps) {
   const { formatMoney } = useCurrency();
-  const { context, publicBranding } = useAuthStore();
+  const { context, publicBranding, resolvedSettings, businesses } = useAuthStore();
   const { t } = useT();
   const { themeId, customAccent } = useThemeStore();
   const theme = getThemeDefinition(themeId);
   const accentHex = customAccent || theme.tokens['--theme-accent'];
+  const industryProfile = resolveEffectiveIndustryProfile(context, resolvedSettings, businesses);
 
   const {
     role_persona: persona,
@@ -154,6 +159,25 @@ export function KPICardsStack({ overview }: KPICardsStackProps) {
     (item) => Number(item.discount_percent || 0) > 0
   ).length;
 
+  const topSegmentShares = React.useMemo(() => {
+    const totals: Record<string, number> = {};
+    let totalUnits = 0;
+    for (const c of overview.category_mix || []) {
+      const seg = resolveCategorySegmentDisplay(c.gender_segment, c.category_name, industryProfile);
+      const u = Number(c.units_sold) || 0;
+      totals[seg] = (totals[seg] || 0) + u;
+      totalUnits += u;
+    }
+    const entries = Object.entries(totals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name, units]) => ({
+        name,
+        pct: totalUnits > 0 ? Math.round((units / totalUnits) * 100) : 0,
+      }));
+    return entries;
+  }, [overview.category_mix, industryProfile]);
+
   const customersHeroCard = (
     <article
       className="flex flex-col justify-between rounded-[var(--theme-radius-card)] border border-border-theme bg-contrast p-5 text-contrast-fg shadow-lg"
@@ -173,21 +197,53 @@ export function KPICardsStack({ overview }: KPICardsStackProps) {
         </span>
       </div>
 
-      <div className="mt-4 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
-          <span className="font-semibold text-accent">{kpi.men_share_pct}% Men</span>
-          {100 - kpi.men_share_pct - kpi.women_share_pct > 0 && (
-            <span className="font-medium opacity-70">
-              {100 - kpi.men_share_pct - kpi.women_share_pct}% Unisex
-            </span>
-          )}
-          <span className="font-semibold opacity-90">{kpi.women_share_pct}% Women</span>
+      {industryProfile === 'retail' ? (
+        <div className="mt-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
+            <span className="font-semibold text-accent">{kpi.men_share_pct}% Men</span>
+            {100 - kpi.men_share_pct - kpi.women_share_pct > 0 && (
+              <span className="font-medium opacity-70">
+                {100 - kpi.men_share_pct - kpi.women_share_pct}% Unisex
+              </span>
+            )}
+            <span className="font-semibold opacity-90">{kpi.women_share_pct}% Women</span>
+          </div>
+          <div className="flex h-2 w-full overflow-hidden rounded-full bg-white/15">
+            <div className="h-full bg-accent" style={{ width: `${kpi.men_share_pct}%` }} />
+            <div className="h-full bg-white/75" style={{ width: `${kpi.women_share_pct}%` }} />
+          </div>
         </div>
-        <div className="flex h-2 w-full overflow-hidden rounded-full bg-white/15">
-          <div className="h-full bg-accent" style={{ width: `${kpi.men_share_pct}%` }} />
-          <div className="h-full bg-white/75" style={{ width: `${kpi.women_share_pct}%` }} />
+      ) : (
+        <div className="mt-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] tabular-nums">
+            {topSegmentShares.length > 0 ? (
+              topSegmentShares.map((s, idx) => (
+                <span
+                  key={s.name}
+                  className={idx === 0 ? 'font-semibold text-accent truncate' : 'font-medium opacity-85 truncate'}
+                >
+                  {s.pct}% {s.name}
+                </span>
+              ))
+            ) : (
+              <span className="font-semibold text-accent">100% Active Customer Base</span>
+            )}
+          </div>
+          <div className="flex h-2 w-full overflow-hidden rounded-full bg-white/15">
+            {topSegmentShares.length > 0 ? (
+              topSegmentShares.map((s, idx) => (
+                <div
+                  key={s.name}
+                  className={idx === 0 ? 'h-full bg-accent' : idx === 1 ? 'h-full bg-white/75' : 'h-full bg-white/40'}
+                  style={{ width: `${Math.max(4, s.pct)}%` }}
+                />
+              ))
+            ) : (
+              <div className="h-full w-full bg-accent" />
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-3 text-xs">
         <span className="opacity-65">{prevLabel}</span>

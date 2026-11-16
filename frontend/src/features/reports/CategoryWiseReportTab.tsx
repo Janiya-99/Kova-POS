@@ -22,6 +22,12 @@ import {
   useSortableData,
 } from '@/components/ui/data-table-pagination';
 import { useCurrency } from '@/hooks/useCurrency';
+import {
+  getIndustryCategorySegments,
+  resolveCategorySegmentDisplay,
+  resolveEffectiveIndustryProfile,
+} from '@/lib/branchAccess';
+import { useAuthStore } from '@/store/authStore';
 import { getThemeDefinition, useThemeStore } from '@/store/themeStore';
 import { FilterPillGroup, ReportEmptyState, ReportTableShell } from './ReportSurfaceCard';
 import { toReportNumber, type CategoryReportRow } from './types';
@@ -32,10 +38,15 @@ interface CategoryWiseReportTabProps {
   onResetSearch?: () => void;
 }
 
-type SegmentFilter = 'ALL' | 'Women' | 'Men' | 'Unisex';
-
 export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryWiseReportTabProps) {
   const { formatMoney } = useCurrency();
+  const { context, resolvedSettings, businesses } = useAuthStore();
+  const industryProfile = resolveEffectiveIndustryProfile(context, resolvedSettings, businesses);
+  const segmentConfig = React.useMemo(
+    () => getIndustryCategorySegments(industryProfile),
+    [industryProfile]
+  );
+
   const { themeId, customAccent, colorMode } = useThemeStore();
   const theme = getThemeDefinition(themeId);
   const accentHex = customAccent || theme.tokens['--theme-accent'];
@@ -43,12 +54,21 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
   const contrastHex = colorMode === 'dark' ? '#E2E8F0' : theme.tokens['--theme-contrast-card'];
   const palette = [accentHex, '#22C55E', contrastHex, softHex, '#F59E0B'];
 
-  const [segmentFilter, setSegmentFilter] = React.useState<SegmentFilter>('ALL');
+  const [segmentFilter, setSegmentFilter] = React.useState<string>('ALL');
   const [hoveredSegment, setHoveredSegment] = React.useState<string | null>(null);
+
+  const normalizedRows = React.useMemo(
+    () =>
+      rows.map((r) => ({
+        ...r,
+        gender_segment: resolveCategorySegmentDisplay(r.gender_segment, r.slug, industryProfile),
+      })),
+    [rows, industryProfile]
+  );
 
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    return normalizedRows.filter((r) => {
       if (segmentFilter !== 'ALL' && r.gender_segment !== segmentFilter) return false;
       if (!q) return true;
       return (
@@ -57,7 +77,7 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
         r.gender_segment.toLowerCase().includes(q)
       );
     });
-  }, [rows, search, segmentFilter]);
+  }, [normalizedRows, search, segmentFilter]);
 
   const { sortedItems, sortConfig, requestSort } = useSortableData(
     filtered,
@@ -99,15 +119,14 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
   );
 
   const segmentBreakdown = React.useMemo(() => {
-    const acc: Record<string, { revenue: number; profit: number; units: number }> = {
-      Women: { revenue: 0, profit: 0, units: 0 },
-      Men: { revenue: 0, profit: 0, units: 0 },
-      Unisex: { revenue: 0, profit: 0, units: 0 },
-    };
+    const acc: Record<string, { revenue: number; profit: number; units: number }> = {};
+    for (const opt of segmentConfig.options) {
+      acc[opt.value] = { revenue: 0, profit: 0, units: 0 };
+    }
     let grand = 0;
-    rows.forEach((r) => {
+    normalizedRows.forEach((r) => {
       const rev = toReportNumber(r.net_revenue);
-      const seg = r.gender_segment || 'Unisex';
+      const seg = r.gender_segment || segmentConfig.defaultSegment;
       if (!acc[seg]) acc[seg] = { revenue: 0, profit: 0, units: 0 };
       acc[seg].revenue += rev;
       acc[seg].profit += toReportNumber(r.gross_profit);
@@ -120,7 +139,7 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
       share: grand > 0 ? ((stats.revenue / grand) * 100).toFixed(1) : '0.0',
       color: palette[idx % palette.length],
     }));
-  }, [rows, palette]);
+  }, [normalizedRows, segmentConfig, palette]);
 
   return (
     <div className="space-y-4">
@@ -175,9 +194,11 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
               <div>
                 <h4 className="text-[13px] font-bold text-ink flex items-center gap-1.5">
                   <Layers className="h-4 w-4 text-accent" />
-                  Merchandising Segment Mix
+                  {segmentConfig.segmentLabel} Mix
                 </h4>
-                <p className="text-[11px] text-ink-muted">Women vs Men vs Unisex contribution</p>
+                <p className="text-[11px] text-ink-muted">
+                  Revenue &amp; unit contribution by {segmentConfig.segmentLabel.toLowerCase()}
+                </p>
               </div>
             </div>
 
@@ -267,10 +288,11 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
             value={segmentFilter}
             onChange={setSegmentFilter}
             options={[
-              { id: 'ALL', label: 'All Segments' },
-              { id: 'Women', label: 'Women' },
-              { id: 'Men', label: 'Men' },
-              { id: 'Unisex', label: 'Unisex' },
+              { id: 'ALL', label: segmentConfig.allFilterLabel },
+              ...segmentConfig.options.map((opt) => ({
+                id: opt.value,
+                label: opt.label,
+              })),
             ]}
           />
         }
@@ -341,8 +363,13 @@ export function CategoryWiseReportTab({ rows, search, onResetSearch }: CategoryW
                       <div className="text-[10.5px] text-ink-muted">/{r.slug}</div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={r.gender_segment === 'Women' ? 'lavender' : 'outline'}>
-                        {r.gender_segment}
+                      <Badge
+                        variant={
+                          segmentConfig.options.find((o) => o.value === r.gender_segment)
+                            ?.badgeVariant || 'outline'
+                        }
+                      >
+                        {formatDisplayLabel(r.gender_segment)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{r.sku_count}</TableCell>
