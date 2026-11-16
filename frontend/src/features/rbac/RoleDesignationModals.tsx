@@ -76,6 +76,10 @@ export interface AccessUserRow {
   max_pos_discount_pct: string;
   is_active: boolean;
   has_pin: boolean;
+  all_branches_access?: boolean;
+  allowed_branch_ids?: string[];
+  allowed_terminal_ids?: string[];
+  default_terminal_id?: string | null;
 }
 
 export interface AccessUsersResponse {
@@ -84,6 +88,14 @@ export interface AccessUsersResponse {
   departments?: DepartmentRow[];
   designations: DesignationRow[];
   branches: Array<{ id: string; code: string; name: string }>;
+  terminals?: Array<{
+    id: string;
+    branch_id: string;
+    branch_code: string;
+    branch_name: string;
+    code: string;
+    name: string;
+  }>;
 }
 
 export interface RoleEditorTarget {

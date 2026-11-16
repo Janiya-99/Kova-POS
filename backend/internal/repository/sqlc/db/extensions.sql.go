@@ -1192,7 +1192,8 @@ func (q *Queries) GetTaxGroupByID(ctx context.Context, arg GetTaxGroupByIDParams
 }
 
 const getUserBusinessRoleByID = `-- name: GetUserBusinessRoleByID :one
-SELECT id, user_id, business_id, branch_id, role_id, designation_id, is_active
+SELECT id, user_id, business_id, branch_id, role_id, designation_id, is_active,
+       all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id
 FROM user_business_roles
 WHERE id = $1 AND business_id = $2
 LIMIT 1
@@ -1204,13 +1205,17 @@ type GetUserBusinessRoleByIDParams struct {
 }
 
 type GetUserBusinessRoleByIDRow struct {
-	ID            uuid.UUID     `json:"id"`
-	UserID        uuid.UUID     `json:"user_id"`
-	BusinessID    uuid.UUID     `json:"business_id"`
-	BranchID      uuid.NullUUID `json:"branch_id"`
-	RoleID        uuid.UUID     `json:"role_id"`
-	DesignationID uuid.NullUUID `json:"designation_id"`
-	IsActive      bool          `json:"is_active"`
+	ID                 uuid.UUID     `json:"id"`
+	UserID             uuid.UUID     `json:"user_id"`
+	BusinessID         uuid.UUID     `json:"business_id"`
+	BranchID           uuid.NullUUID `json:"branch_id"`
+	RoleID             uuid.UUID     `json:"role_id"`
+	DesignationID      uuid.NullUUID `json:"designation_id"`
+	IsActive           bool          `json:"is_active"`
+	AllBranchesAccess  bool          `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID   `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID   `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID `json:"default_terminal_id"`
 }
 
 func (q *Queries) GetUserBusinessRoleByID(ctx context.Context, arg GetUserBusinessRoleByIDParams) (GetUserBusinessRoleByIDRow, error) {
@@ -1224,6 +1229,10 @@ func (q *Queries) GetUserBusinessRoleByID(ctx context.Context, arg GetUserBusine
 		&i.RoleID,
 		&i.DesignationID,
 		&i.IsActive,
+		&i.AllBranchesAccess,
+		&i.AllowedBranchIds,
+		&i.AllowedTerminalIds,
+		&i.DefaultTerminalID,
 	)
 	return i, err
 }
@@ -1322,28 +1331,41 @@ func (q *Queries) InsertSystemNotification(ctx context.Context, arg InsertSystem
 }
 
 const insertUserBusinessRole = `-- name: InsertUserBusinessRole :one
-INSERT INTO user_business_roles (user_id, business_id, branch_id, role_id, designation_id, supervisor_pin_hash, is_active)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, business_id, role_id, designation_id, is_active
+INSERT INTO user_business_roles (
+    user_id, business_id, branch_id, role_id, designation_id, supervisor_pin_hash, is_active,
+    all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, user_id, business_id, branch_id, role_id, designation_id, is_active,
+          all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id
 `
 
 type InsertUserBusinessRoleParams struct {
-	UserID            uuid.UUID     `json:"user_id"`
-	BusinessID        uuid.UUID     `json:"business_id"`
-	BranchID          uuid.NullUUID `json:"branch_id"`
-	RoleID            uuid.UUID     `json:"role_id"`
-	DesignationID     uuid.NullUUID `json:"designation_id"`
-	SupervisorPinHash string        `json:"supervisor_pin_hash"`
-	IsActive          bool          `json:"is_active"`
+	UserID             uuid.UUID     `json:"user_id"`
+	BusinessID         uuid.UUID     `json:"business_id"`
+	BranchID           uuid.NullUUID `json:"branch_id"`
+	RoleID             uuid.UUID     `json:"role_id"`
+	DesignationID      uuid.NullUUID `json:"designation_id"`
+	SupervisorPinHash  string        `json:"supervisor_pin_hash"`
+	IsActive           bool          `json:"is_active"`
+	AllBranchesAccess  bool          `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID   `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID   `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID `json:"default_terminal_id"`
 }
 
 type InsertUserBusinessRoleRow struct {
-	ID            uuid.UUID     `json:"id"`
-	UserID        uuid.UUID     `json:"user_id"`
-	BusinessID    uuid.UUID     `json:"business_id"`
-	RoleID        uuid.UUID     `json:"role_id"`
-	DesignationID uuid.NullUUID `json:"designation_id"`
-	IsActive      bool          `json:"is_active"`
+	ID                 uuid.UUID     `json:"id"`
+	UserID             uuid.UUID     `json:"user_id"`
+	BusinessID         uuid.UUID     `json:"business_id"`
+	BranchID           uuid.NullUUID `json:"branch_id"`
+	RoleID             uuid.UUID     `json:"role_id"`
+	DesignationID      uuid.NullUUID `json:"designation_id"`
+	IsActive           bool          `json:"is_active"`
+	AllBranchesAccess  bool          `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID   `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID   `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID `json:"default_terminal_id"`
 }
 
 func (q *Queries) InsertUserBusinessRole(ctx context.Context, arg InsertUserBusinessRoleParams) (InsertUserBusinessRoleRow, error) {
@@ -1355,15 +1377,24 @@ func (q *Queries) InsertUserBusinessRole(ctx context.Context, arg InsertUserBusi
 		arg.DesignationID,
 		arg.SupervisorPinHash,
 		arg.IsActive,
+		arg.AllBranchesAccess,
+		arg.AllowedBranchIds,
+		arg.AllowedTerminalIds,
+		arg.DefaultTerminalID,
 	)
 	var i InsertUserBusinessRoleRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.BusinessID,
+		&i.BranchID,
 		&i.RoleID,
 		&i.DesignationID,
 		&i.IsActive,
+		&i.AllBranchesAccess,
+		&i.AllowedBranchIds,
+		&i.AllowedTerminalIds,
+		&i.DefaultTerminalID,
 	)
 	return i, err
 }
@@ -1600,7 +1631,11 @@ SELECT
     COALESCE(d.name, r.name)::TEXT AS designation_name,
     COALESCE(d.max_pos_discount_pct, 100.00)::NUMERIC(5,2) AS max_pos_discount_pct,
     ubr.is_active,
-    (ubr.supervisor_pin_hash <> '')::BOOLEAN AS has_pin
+    (ubr.supervisor_pin_hash <> '')::BOOLEAN AS has_pin,
+    ubr.all_branches_access,
+    ubr.allowed_branch_ids,
+    ubr.allowed_terminal_ids,
+    ubr.default_terminal_id
 FROM user_business_roles ubr
 JOIN users u ON u.id = ubr.user_id
 JOIN roles r ON r.id = ubr.role_id
@@ -1628,6 +1663,10 @@ type ListBusinessAccessUsersRow struct {
 	MaxPosDiscountPct  decimal.Decimal    `json:"max_pos_discount_pct"`
 	IsActive           bool               `json:"is_active"`
 	HasPin             bool               `json:"has_pin"`
+	AllBranchesAccess  bool               `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID        `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID        `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID      `json:"default_terminal_id"`
 }
 
 func (q *Queries) ListBusinessAccessUsers(ctx context.Context, businessID uuid.UUID) ([]ListBusinessAccessUsersRow, error) {
@@ -1657,6 +1696,10 @@ func (q *Queries) ListBusinessAccessUsers(ctx context.Context, businessID uuid.U
 			&i.MaxPosDiscountPct,
 			&i.IsActive,
 			&i.HasPin,
+			&i.AllBranchesAccess,
+			&i.AllowedBranchIds,
+			&i.AllowedTerminalIds,
+			&i.DefaultTerminalID,
 		); err != nil {
 			return nil, err
 		}
@@ -2885,28 +2928,41 @@ SET
     role_id = $3,
     designation_id = $4,
     branch_id = $5,
-    is_active = $6
+    is_active = $6,
+    all_branches_access = $7,
+    allowed_branch_ids = $8,
+    allowed_terminal_ids = $9,
+    default_terminal_id = $10
 WHERE business_id = $1 AND id = $2
-RETURNING id, user_id, business_id, role_id, designation_id, branch_id, is_active
+RETURNING id, user_id, business_id, role_id, designation_id, branch_id, is_active,
+          all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id
 `
 
 type UpdateUserBusinessRoleAssignmentParams struct {
-	BusinessID    uuid.UUID     `json:"business_id"`
-	ID            uuid.UUID     `json:"id"`
-	RoleID        uuid.UUID     `json:"role_id"`
-	DesignationID uuid.NullUUID `json:"designation_id"`
-	BranchID      uuid.NullUUID `json:"branch_id"`
-	IsActive      bool          `json:"is_active"`
+	BusinessID         uuid.UUID     `json:"business_id"`
+	ID                 uuid.UUID     `json:"id"`
+	RoleID             uuid.UUID     `json:"role_id"`
+	DesignationID      uuid.NullUUID `json:"designation_id"`
+	BranchID           uuid.NullUUID `json:"branch_id"`
+	IsActive           bool          `json:"is_active"`
+	AllBranchesAccess  bool          `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID   `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID   `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID `json:"default_terminal_id"`
 }
 
 type UpdateUserBusinessRoleAssignmentRow struct {
-	ID            uuid.UUID     `json:"id"`
-	UserID        uuid.UUID     `json:"user_id"`
-	BusinessID    uuid.UUID     `json:"business_id"`
-	RoleID        uuid.UUID     `json:"role_id"`
-	DesignationID uuid.NullUUID `json:"designation_id"`
-	BranchID      uuid.NullUUID `json:"branch_id"`
-	IsActive      bool          `json:"is_active"`
+	ID                 uuid.UUID     `json:"id"`
+	UserID             uuid.UUID     `json:"user_id"`
+	BusinessID         uuid.UUID     `json:"business_id"`
+	RoleID             uuid.UUID     `json:"role_id"`
+	DesignationID      uuid.NullUUID `json:"designation_id"`
+	BranchID           uuid.NullUUID `json:"branch_id"`
+	IsActive           bool          `json:"is_active"`
+	AllBranchesAccess  bool          `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID   `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID   `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID `json:"default_terminal_id"`
 }
 
 func (q *Queries) UpdateUserBusinessRoleAssignment(ctx context.Context, arg UpdateUserBusinessRoleAssignmentParams) (UpdateUserBusinessRoleAssignmentRow, error) {
@@ -2917,6 +2973,10 @@ func (q *Queries) UpdateUserBusinessRoleAssignment(ctx context.Context, arg Upda
 		arg.DesignationID,
 		arg.BranchID,
 		arg.IsActive,
+		arg.AllBranchesAccess,
+		arg.AllowedBranchIds,
+		arg.AllowedTerminalIds,
+		arg.DefaultTerminalID,
 	)
 	var i UpdateUserBusinessRoleAssignmentRow
 	err := row.Scan(
@@ -2927,6 +2987,10 @@ func (q *Queries) UpdateUserBusinessRoleAssignment(ctx context.Context, arg Upda
 		&i.DesignationID,
 		&i.BranchID,
 		&i.IsActive,
+		&i.AllBranchesAccess,
+		&i.AllowedBranchIds,
+		&i.AllowedTerminalIds,
+		&i.DefaultTerminalID,
 	)
 	return i, err
 }

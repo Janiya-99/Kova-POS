@@ -28,27 +28,30 @@ import (
 
 // AuthJWTClaims defines the signed JWT payload for tenant-isolated requests.
 type AuthJWTClaims struct {
-	TokenScope        string   `json:"token_scope"` // "TENANT"
-	CompanySlug       string   `json:"company_slug"`
-	DBName            string   `json:"db_name,omitempty"`
-	UserID            string   `json:"user_id"`
-	Email             string   `json:"email"`
-	FullName          string   `json:"full_name"`
-	AvatarURL         string   `json:"avatar_url"`
-	BusinessID        string   `json:"business_id"`
-	BusinessName      string   `json:"business_name"`
-	TradeName         string   `json:"trade_name"`
-	BaseCurrency      string   `json:"base_currency"`
-	PrimaryColorHex   string   `json:"primary_color_hex"`
-	DefaultLanguage   string   `json:"default_language"`
-	IndustryProfile   string   `json:"industry_profile"`
-	BranchID          string   `json:"branch_id"`
-	TerminalID        string   `json:"terminal_id"`
-	RoleCode          string   `json:"role_code"`
-	RoleName          string   `json:"role_name"`
-	DesignationName   string   `json:"designation_name"`
-	MaxPOSDiscountPct string   `json:"max_pos_discount_pct"`
-	Permissions       []string `json:"permissions"`
+	TokenScope         string   `json:"token_scope"` // "TENANT"
+	CompanySlug        string   `json:"company_slug"`
+	DBName             string   `json:"db_name,omitempty"`
+	UserID             string   `json:"user_id"`
+	Email              string   `json:"email"`
+	FullName           string   `json:"full_name"`
+	AvatarURL          string   `json:"avatar_url"`
+	BusinessID         string   `json:"business_id"`
+	BusinessName       string   `json:"business_name"`
+	TradeName          string   `json:"trade_name"`
+	BaseCurrency       string   `json:"base_currency"`
+	PrimaryColorHex    string   `json:"primary_color_hex"`
+	DefaultLanguage    string   `json:"default_language"`
+	IndustryProfile    string   `json:"industry_profile"`
+	BranchID           string   `json:"branch_id"`
+	TerminalID         string   `json:"terminal_id"`
+	AllBranchesAccess  bool     `json:"all_branches_access"`
+	AllowedBranchIDs   []string `json:"allowed_branch_ids,omitempty"`
+	AllowedTerminalIDs []string `json:"allowed_terminal_ids,omitempty"`
+	RoleCode           string   `json:"role_code"`
+	RoleName           string   `json:"role_name"`
+	DesignationName    string   `json:"designation_name"`
+	MaxPOSDiscountPct  string   `json:"max_pos_discount_pct"`
+	Permissions        []string `json:"permissions"`
 	jwt.RegisteredClaims
 }
 
@@ -381,6 +384,10 @@ func (a *AuthUsecase) SwitchContextWithMeta(ctx context.Context, current domain.
 		MaxPosDiscountPct:  roleRow.MaxPosDiscountPct,
 		DesignationName:    roleRow.DesignationName,
 		SupervisorPinHash:  roleRow.SupervisorPinHash,
+		AllBranchesAccess:  roleRow.AllBranchesAccess,
+		AllowedBranchIds:   roleRow.AllowedBranchIds,
+		AllowedTerminalIds: roleRow.AllowedTerminalIds,
+		DefaultTerminalID:  roleRow.DefaultTerminalID,
 	}
 
 	return a.issueSessionWithMeta(ctx, roleRow.UserID, roleRow.Email, roleRow.FullName, roleRow.AvatarUrl, selected, branchID, terminalID, current.SessionID, meta, []db.GetUserBusinessContextsRow{selected})
@@ -394,22 +401,45 @@ func (a *AuthUsecase) RefreshSession(ctx context.Context, current domain.TenantC
 	return a.SwitchContextWithMeta(ctx, current, current.BusinessID, current.BranchID, current.TerminalID, meta)
 }
 
-// IsMultiBranchRole returns true ONLY for enterprise roles permitted to access, switch, or manage multiple branches.
+// IsMultiBranchRole returns true ONLY for enterprise roles permitted to access, switch, or manage multiple branches by default.
 func IsMultiBranchRole(roleCode string) bool {
 	return roleCode == "SuperAdmin" || roleCode == "BusinessOwner"
 }
 
 func filterMultiBranchPermissions(roleCode string, perms []string) []string {
-	multiBranch := IsMultiBranchRole(roleCode)
-	filtered := make([]string, 0, len(perms))
+	return filterMultiBranchPermissionsForScope(roleCode, IsMultiBranchRole(roleCode), perms)
+}
+
+func filterMultiBranchPermissionsForScope(roleCode string, multiBranch bool, perms []string) []string {
+	isOwnerRole := IsMultiBranchRole(roleCode)
+	filtered := make([]string, 0, len(perms)+2)
+	hasSwitch := false
+	hasBranchView := false
 	for _, p := range perms {
 		if p == "platform:admin" {
 			continue
 		}
-		if !multiBranch && (p == "branches:switch" || p == "branches:manage") {
+		if !isOwnerRole && p == "branches:manage" {
 			continue
 		}
+		if !multiBranch && p == "branches:switch" {
+			continue
+		}
+		if p == "branches:switch" {
+			hasSwitch = true
+		}
+		if p == "branches:view" {
+			hasBranchView = true
+		}
 		filtered = append(filtered, p)
+	}
+	if multiBranch {
+		if !hasBranchView {
+			filtered = append(filtered, "branches:view")
+		}
+		if !hasSwitch {
+			filtered = append(filtered, "branches:switch")
+		}
 	}
 	return filtered
 }
@@ -486,7 +516,6 @@ func (a *AuthUsecase) issueSessionWithMeta(
 	if err != nil {
 		return nil, err
 	}
-	perms := filterMultiBranchPermissions(selected.RoleCode, rawPerms)
 
 	branches, err := a.queries.ListBranchesForBusiness(ctx, selected.BusinessID)
 	if err != nil {
@@ -494,92 +523,164 @@ func (a *AuthUsecase) issueSessionWithMeta(
 	}
 	warehouses, _ := a.queries.ListWarehousesForBusiness(ctx, selected.BusinessID)
 
-	// Strictly enforce branch & warehouse visibility by role scope:
-	// ONLY SuperAdmin and BusinessOwner can access/switch multiple branches.
-	// All other roles (Cashier, BranchManager, Accountant, InventoryController, custom) are locked to 1 branch.
-	isEnterpriseScope := IsMultiBranchRole(selected.RoleCode)
-	activeBranchID := uuid.Nil
-	if !isEnterpriseScope {
-		var lockedBranch db.ListBranchesForBusinessRow
-		found := false
-		if selected.BranchID.Valid {
-			for _, br := range branches {
-				if br.ID == selected.BranchID.UUID {
-					lockedBranch = br
-					found = true
-					break
-				}
-			}
-		}
-		if !found && len(branches) > 0 {
-			lockedBranch = branches[0]
-			found = true
-		}
-		if found {
-			if overrideBranchID != uuid.Nil && overrideBranchID != lockedBranch.ID {
-				return nil, errors.New("only Company Owner or SuperAdmin can access or switch multiple branches")
-			}
-			branches = []db.ListBranchesForBusinessRow{lockedBranch}
-			activeBranchID = lockedBranch.ID
-			scopedWarehouses := make([]db.ListWarehousesForBusinessRow, 0, len(warehouses))
-			for _, wh := range warehouses {
-				if wh.BranchID == uuid.Nil || wh.BranchID == lockedBranch.ID {
-					scopedWarehouses = append(scopedWarehouses, wh)
-				}
-			}
-			warehouses = scopedWarehouses
-		} else {
-			branches = []db.ListBranchesForBusinessRow{}
-			warehouses = []db.ListWarehousesForBusinessRow{}
+	// Evaluate branch & terminal access based on role and explicit multi-branch/multi-terminal assignments:
+	// 1. BusinessOwner / SuperAdmin or users with AllBranchesAccess=true access all company branches.
+	// 2. Users with AllowedBranchIds (1 or multiple) access those specific branches.
+	isEnterpriseScope := IsMultiBranchRole(selected.RoleCode) || selected.AllBranchesAccess || (!selected.BranchID.Valid && len(selected.AllowedBranchIds) == 0)
+
+	allowedBranchSet := make(map[uuid.UUID]bool)
+	if isEnterpriseScope {
+		for _, br := range branches {
+			allowedBranchSet[br.ID] = true
 		}
 	} else {
-		if overrideBranchID != uuid.Nil {
-			for _, br := range branches {
-				if br.ID == overrideBranchID {
-					activeBranchID = overrideBranchID
-					break
-				}
+		for _, bid := range selected.AllowedBranchIds {
+			if bid != uuid.Nil {
+				allowedBranchSet[bid] = true
 			}
 		}
-		if activeBranchID == uuid.Nil && selected.BranchID.Valid {
-			for _, br := range branches {
-				if br.ID == selected.BranchID.UUID {
-					activeBranchID = selected.BranchID.UUID
-					break
-				}
+		if selected.BranchID.Valid && selected.BranchID.UUID != uuid.Nil {
+			allowedBranchSet[selected.BranchID.UUID] = true
+		}
+		filteredBranches := make([]db.ListBranchesForBusinessRow, 0, len(branches))
+		for _, br := range branches {
+			if allowedBranchSet[br.ID] {
+				filteredBranches = append(filteredBranches, br)
 			}
 		}
-		if activeBranchID == uuid.Nil && len(branches) > 0 {
-			activeBranchID = branches[0].ID
+		if len(filteredBranches) == 0 && len(branches) > 0 {
+			filteredBranches = []db.ListBranchesForBusinessRow{branches[0]}
+			allowedBranchSet[branches[0].ID] = true
+		}
+		branches = filteredBranches
+
+		scopedWarehouses := make([]db.ListWarehousesForBusinessRow, 0, len(warehouses))
+		for _, wh := range warehouses {
+			if wh.BranchID == uuid.Nil || allowedBranchSet[wh.BranchID] {
+				scopedWarehouses = append(scopedWarehouses, wh)
+			}
+		}
+		warehouses = scopedWarehouses
+	}
+
+	hasMultiBranch := isEnterpriseScope || len(branches) > 1
+	perms := filterMultiBranchPermissionsForScope(selected.RoleCode, hasMultiBranch, rawPerms)
+
+	activeBranchID := uuid.Nil
+	if overrideBranchID != uuid.Nil {
+		for _, br := range branches {
+			if br.ID == overrideBranchID {
+				activeBranchID = overrideBranchID
+				break
+			}
+		}
+		if activeBranchID == uuid.Nil {
+			return nil, errors.New("you do not have access to switch to the requested branch")
+		}
+	}
+	if activeBranchID == uuid.Nil && selected.BranchID.Valid {
+		for _, br := range branches {
+			if br.ID == selected.BranchID.UUID {
+				activeBranchID = selected.BranchID.UUID
+				break
+			}
+		}
+	}
+	if activeBranchID == uuid.Nil && len(branches) > 0 {
+		activeBranchID = branches[0].ID
+	}
+
+	// Resolve allowed terminals across the user's allowed branches.
+	allowedTermSet := make(map[uuid.UUID]bool)
+	if !IsMultiBranchRole(selected.RoleCode) && len(selected.AllowedTerminalIds) > 0 {
+		for _, tid := range selected.AllowedTerminalIds {
+			if tid != uuid.Nil {
+				allowedTermSet[tid] = true
+			}
+		}
+		if selected.DefaultTerminalID.Valid && selected.DefaultTerminalID.UUID != uuid.Nil {
+			allowedTermSet[selected.DefaultTerminalID.UUID] = true
 		}
 	}
 
-	var terminals []db.ListTerminalsForBranchRow
-	if activeBranchID != uuid.Nil {
-		terminals, _ = a.queries.ListTerminalsForBranch(ctx, db.ListTerminalsForBranchParams{
+	allBizTerms, _ := a.queries.ListActiveTerminalsForBusiness(ctx, selected.BusinessID)
+	terminals := make([]db.ListTerminalsForBranchRow, 0, len(allBizTerms))
+	for _, tm := range allBizTerms {
+		if !allowedBranchSet[tm.BranchID] {
+			continue
+		}
+		if len(allowedTermSet) > 0 && !allowedTermSet[tm.ID] {
+			continue
+		}
+		terminals = append(terminals, db.ListTerminalsForBranchRow{
+			ID:             tm.ID,
+			BusinessID:     tm.BusinessID,
+			BranchID:       tm.BranchID,
+			Code:           tm.Code,
+			Name:           tm.Name,
+			HardwareSerial: tm.HardwareSerial,
+			IsActive:       tm.IsActive,
+		})
+	}
+	if len(terminals) == 0 && activeBranchID != uuid.Nil {
+		branchTerms, _ := a.queries.ListTerminalsForBranch(ctx, db.ListTerminalsForBranchParams{
 			BusinessID: selected.BusinessID,
 			BranchID:   activeBranchID,
 		})
+		for _, tm := range branchTerms {
+			if len(allowedTermSet) == 0 || allowedTermSet[tm.ID] {
+				terminals = append(terminals, tm)
+			}
+		}
+		if len(terminals) == 0 {
+			terminals = branchTerms
+		}
 	}
+
 	activeTerminalID := uuid.Nil
 	if overrideTerminalID != uuid.Nil {
 		for _, tm := range terminals {
 			if tm.ID == overrideTerminalID {
-				activeTerminalID = overrideTerminalID
+				if overrideBranchID == uuid.Nil && tm.BranchID != activeBranchID && allowedBranchSet[tm.BranchID] {
+					activeBranchID = tm.BranchID
+				}
+				if tm.BranchID == activeBranchID {
+					activeTerminalID = overrideTerminalID
+				}
 				break
 			}
 		}
-		if activeTerminalID == uuid.Nil && !isEnterpriseScope {
-			if targetTm, tErr := a.queries.GetTerminalForBusiness(ctx, db.GetTerminalForBusinessParams{
-				BusinessID: selected.BusinessID,
-				ID:         overrideTerminalID,
-			}); tErr == nil && targetTm.BranchID != activeBranchID {
-				return nil, errors.New("terminal does not belong to your assigned branch")
+		if activeTerminalID == uuid.Nil {
+			return nil, errors.New("terminal does not belong to your assigned branch or terminal scope")
+		}
+	}
+	if activeTerminalID == uuid.Nil && selected.DefaultTerminalID.Valid {
+		for _, tm := range terminals {
+			if tm.ID == selected.DefaultTerminalID.UUID && tm.BranchID == activeBranchID {
+				activeTerminalID = tm.ID
+				break
+			}
+		}
+	}
+	if activeTerminalID == uuid.Nil {
+		for _, tm := range terminals {
+			if tm.BranchID == activeBranchID {
+				activeTerminalID = tm.ID
+				break
 			}
 		}
 	}
 	if activeTerminalID == uuid.Nil && len(terminals) > 0 {
 		activeTerminalID = terminals[0].ID
+	}
+
+	allowedBranchIDStrs := make([]string, 0, len(branches))
+	for _, br := range branches {
+		allowedBranchIDStrs = append(allowedBranchIDStrs, br.ID.String())
+	}
+	allowedTerminalIDStrs := make([]string, 0, len(allowedTermSet))
+	for tid := range allowedTermSet {
+		allowedTerminalIDStrs = append(allowedTerminalIDStrs, tid.String())
 	}
 
 	policy := a.ResolveSessionPolicy(ctx, selected.BusinessID, activeBranchID, activeTerminalID)
@@ -721,6 +822,9 @@ func (a *AuthUsecase) issueSessionWithMeta(
 		IndustryProfile:      industryProfile,
 		BranchID:             activeBranchID,
 		TerminalID:           activeTerminalID,
+		AllBranchesAccess:    isEnterpriseScope,
+		AllowedBranchIDs:     allowedBranchIDStrs,
+		AllowedTerminalIDs:   allowedTerminalIDStrs,
 		RoleCode:             selected.RoleCode,
 		RoleName:             selected.RoleName,
 		DesignationName:      selected.DesignationName,
@@ -731,27 +835,30 @@ func (a *AuthUsecase) issueSessionWithMeta(
 	a.CacheUserPermissions(ctx, tc.BusinessID, tc.UserID, perms)
 
 	claims := AuthJWTClaims{
-		TokenScope:        "TENANT",
-		CompanySlug:       a.companySlug,
-		DBName:            a.dbName,
-		UserID:            tc.UserID.String(),
-		Email:             tc.Email,
-		FullName:          tc.FullName,
-		AvatarURL:         tc.AvatarURL,
-		BusinessID:        tc.BusinessID.String(),
-		BusinessName:      tc.BusinessName,
-		TradeName:         tc.TradeName,
-		BaseCurrency:      tc.BaseCurrency,
-		PrimaryColorHex:   tc.PrimaryColorHex,
-		DefaultLanguage:   tc.DefaultLanguage,
-		IndustryProfile:   tc.IndustryProfile,
-		BranchID:          tc.BranchID.String(),
-		TerminalID:        tc.TerminalID.String(),
-		RoleCode:          tc.RoleCode,
-		RoleName:          tc.RoleName,
-		DesignationName:   tc.DesignationName,
-		MaxPOSDiscountPct: tc.MaxPOSDiscountPct.StringFixed(2),
-		Permissions:       tc.Permissions,
+		TokenScope:         "TENANT",
+		CompanySlug:        a.companySlug,
+		DBName:             a.dbName,
+		UserID:             tc.UserID.String(),
+		Email:              tc.Email,
+		FullName:           tc.FullName,
+		AvatarURL:          tc.AvatarURL,
+		BusinessID:         tc.BusinessID.String(),
+		BusinessName:       tc.BusinessName,
+		TradeName:          tc.TradeName,
+		BaseCurrency:       tc.BaseCurrency,
+		PrimaryColorHex:    tc.PrimaryColorHex,
+		DefaultLanguage:    tc.DefaultLanguage,
+		IndustryProfile:    tc.IndustryProfile,
+		BranchID:           tc.BranchID.String(),
+		TerminalID:         tc.TerminalID.String(),
+		AllBranchesAccess:  tc.AllBranchesAccess,
+		AllowedBranchIDs:   tc.AllowedBranchIDs,
+		AllowedTerminalIDs: tc.AllowedTerminalIDs,
+		RoleCode:           tc.RoleCode,
+		RoleName:           tc.RoleName,
+		DesignationName:    tc.DesignationName,
+		MaxPOSDiscountPct:  tc.MaxPOSDiscountPct.StringFixed(2),
+		Permissions:        tc.Permissions,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        sessionID.String(),
 			Subject:   tc.UserID.String(),
@@ -1435,30 +1542,34 @@ func (a *AuthUsecase) ParseJWT(tokenStr string) (domain.TenantContext, error) {
 		industryProfile = "retail"
 	}
 
+	hasMultiBranch := IsMultiBranchRole(claims.RoleCode) || claims.AllBranchesAccess || len(claims.AllowedBranchIDs) > 1
 	return domain.TenantContext{
-		TokenScope:        "TENANT",
-		SessionID:         sessionID,
-		SessionExpiresAt:  expPtr,
-		CompanySlug:       claims.CompanySlug,
-		DBName:            claims.DBName,
-		UserID:            uid,
-		Email:             claims.Email,
-		FullName:          claims.FullName,
-		AvatarURL:         claims.AvatarURL,
-		BusinessID:        bizID,
-		BusinessName:      claims.BusinessName,
-		TradeName:         tradeName,
-		BaseCurrency:      claims.BaseCurrency,
-		PrimaryColorHex:   primaryHex,
-		DefaultLanguage:   defaultLang,
-		IndustryProfile:   industryProfile,
-		BranchID:          brID,
-		TerminalID:        termID,
-		RoleCode:          claims.RoleCode,
-		RoleName:          claims.RoleName,
-		DesignationName:   claims.DesignationName,
-		MaxPOSDiscountPct: maxDisc,
-		Permissions:       filterMultiBranchPermissions(claims.RoleCode, claims.Permissions),
+		TokenScope:         "TENANT",
+		SessionID:          sessionID,
+		SessionExpiresAt:   expPtr,
+		CompanySlug:        claims.CompanySlug,
+		DBName:             claims.DBName,
+		UserID:             uid,
+		Email:              claims.Email,
+		FullName:           claims.FullName,
+		AvatarURL:          claims.AvatarURL,
+		BusinessID:         bizID,
+		BusinessName:       claims.BusinessName,
+		TradeName:          tradeName,
+		BaseCurrency:       claims.BaseCurrency,
+		PrimaryColorHex:    primaryHex,
+		DefaultLanguage:    defaultLang,
+		IndustryProfile:    industryProfile,
+		BranchID:           brID,
+		TerminalID:         termID,
+		AllBranchesAccess:  IsMultiBranchRole(claims.RoleCode) || claims.AllBranchesAccess,
+		AllowedBranchIDs:   claims.AllowedBranchIDs,
+		AllowedTerminalIDs: claims.AllowedTerminalIDs,
+		RoleCode:           claims.RoleCode,
+		RoleName:           claims.RoleName,
+		DesignationName:    claims.DesignationName,
+		MaxPOSDiscountPct:  maxDisc,
+		Permissions:        filterMultiBranchPermissionsForScope(claims.RoleCode, hasMultiBranch, claims.Permissions),
 	}, nil
 }
 
@@ -1518,16 +1629,17 @@ func (a *AuthUsecase) CacheUserPermissions(ctx context.Context, businessID, user
 
 // GetEffectivePermissions returns cached permissions from Redis or falls back to JWT/DB.
 func (a *AuthUsecase) GetEffectivePermissions(ctx context.Context, tc domain.TenantContext) []string {
+	multiBranch := tc.HasMultiBranchAccess()
 	if a.redis != nil {
 		key := fmt.Sprintf("rbac:biz:%s:user:%s", tc.BusinessID.String(), tc.UserID.String())
 		if val, err := a.redis.Get(ctx, key).Result(); err == nil && val != "" {
 			var cached []string
 			if jsonErr := json.Unmarshal([]byte(val), &cached); jsonErr == nil {
-				return filterMultiBranchPermissions(tc.RoleCode, cached)
+				return filterMultiBranchPermissionsForScope(tc.RoleCode, multiBranch, cached)
 			}
 		}
 	}
-	return filterMultiBranchPermissions(tc.RoleCode, tc.Permissions)
+	return filterMultiBranchPermissionsForScope(tc.RoleCode, multiBranch, tc.Permissions)
 }
 
 // ListRoleMatrix returns all system roles and their permissions for the RBAC settings screen.

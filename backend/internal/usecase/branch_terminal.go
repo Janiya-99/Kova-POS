@@ -49,8 +49,7 @@ type SaveTerminalRequest struct {
 	IsActive       bool      `json:"is_active"`
 }
 
-// ValidateUserBranchAssignment enforces that ONLY SuperAdmin and BusinessOwner can hold multi-branch (NULL) access.
-// All branch-level staff (Cashier, BranchManager, Accountant, InventoryController, custom roles) must be pinned to 1 branch.
+// ValidateUserBranchAssignment enforces that non-owner roles have either all-branches explicitly enabled or at least 1 branch assigned.
 func ValidateUserBranchAssignment(roleCode string, branchID *uuid.UUID) error {
 	if IsMultiBranchRole(roleCode) {
 		return nil
@@ -61,13 +60,22 @@ func ValidateUserBranchAssignment(roleCode string, branchID *uuid.UUID) error {
 	return nil
 }
 
-// ResolveScopedBranchID clamps requested branch scope to tc.BranchID unless the role allows multi-branch access.
+// ResolveScopedBranchID clamps requested branch scope to allowed branches unless the user has multi-branch access.
 func ResolveScopedBranchID(tc domain.TenantContext, requestedBranchID uuid.UUID) (uuid.UUID, error) {
-	if IsMultiBranchRole(tc.RoleCode) {
+	if tc.HasAllBranchesAccess() {
 		return requestedBranchID, nil
 	}
-	if requestedBranchID != uuid.Nil && requestedBranchID != tc.BranchID {
-		return tc.BranchID, errors.New("only Company Owner or SuperAdmin can access multiple branches")
+	if tc.HasMultiBranchAccess() {
+		if requestedBranchID == uuid.Nil {
+			return uuid.Nil, nil
+		}
+		if tc.CanAccessBranch(requestedBranchID) {
+			return requestedBranchID, nil
+		}
+		return tc.BranchID, errors.New("you do not have access to the requested branch")
+	}
+	if requestedBranchID != uuid.Nil && !tc.CanAccessBranch(requestedBranchID) {
+		return tc.BranchID, errors.New("only Company Owner or authorized multi-branch staff can access multiple branches")
 	}
 	return tc.BranchID, nil
 }
@@ -158,16 +166,26 @@ func isUniqueViolation(err error) bool {
 }
 
 // ListBranchesManagement returns branches for the active business with terminal, warehouse, and staff stats.
-// Multi-branch roles receive all business branches; single-branch roles only see their assigned branch.
+// Multi-branch users receive their authorized branches; single-branch roles only see their assigned branch.
 func (u *BranchTerminalUsecase) ListBranchesManagement(ctx context.Context, tc domain.TenantContext) ([]db.ListBranchesWithStatsForBusinessRow, error) {
 	filterBranch := uuid.Nil
-	if !IsMultiBranchRole(tc.RoleCode) {
+	if !tc.HasMultiBranchAccess() {
 		filterBranch = tc.BranchID
 	}
-	return u.queries.ListBranchesWithStatsForBusiness(ctx, db.ListBranchesWithStatsForBusinessParams{
+	rows, err := u.queries.ListBranchesWithStatsForBusiness(ctx, db.ListBranchesWithStatsForBusinessParams{
 		BusinessID: tc.BusinessID,
 		Column2:    filterBranch,
 	})
+	if err != nil || tc.HasAllBranchesAccess() || !tc.HasMultiBranchAccess() {
+		return rows, err
+	}
+	filtered := make([]db.ListBranchesWithStatsForBusinessRow, 0, len(rows))
+	for _, r := range rows {
+		if tc.CanAccessBranch(r.ID) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered, nil
 }
 
 // CreateBranch atomically provisions a new branch, its stock warehouse, and an optional starter POS terminal.
@@ -335,16 +353,28 @@ func (u *BranchTerminalUsecase) UpdateBranch(ctx context.Context, tc domain.Tena
 	return updated, nil
 }
 
-// ListTerminalsManagement lists POS terminals with branch details, strictly clamped for single-branch roles.
+// ListTerminalsManagement lists POS terminals with branch details, scoped to the user's authorized branches and terminals.
 func (u *BranchTerminalUsecase) ListTerminalsManagement(ctx context.Context, tc domain.TenantContext, requestedBranchID uuid.UUID) ([]db.ListTerminalsWithBranchForBusinessRow, error) {
 	filterBranch := requestedBranchID
-	if !IsMultiBranchRole(tc.RoleCode) {
+	if !tc.HasMultiBranchAccess() {
+		filterBranch = tc.BranchID
+	} else if requestedBranchID != uuid.Nil && !tc.CanAccessBranch(requestedBranchID) {
 		filterBranch = tc.BranchID
 	}
-	return u.queries.ListTerminalsWithBranchForBusiness(ctx, db.ListTerminalsWithBranchForBusinessParams{
+	rows, err := u.queries.ListTerminalsWithBranchForBusiness(ctx, db.ListTerminalsWithBranchForBusinessParams{
 		BusinessID: tc.BusinessID,
 		Column2:    filterBranch,
 	})
+	if err != nil || tc.HasAllBranchesAccess() && len(tc.AllowedTerminalIDs) == 0 {
+		return rows, err
+	}
+	filtered := make([]db.ListTerminalsWithBranchForBusinessRow, 0, len(rows))
+	for _, r := range rows {
+		if tc.CanAccessBranch(r.BranchID) && tc.CanAccessTerminal(r.ID) {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered, nil
 }
 
 // CreateTerminal creates a POS register terminal attached to a tenant branch.

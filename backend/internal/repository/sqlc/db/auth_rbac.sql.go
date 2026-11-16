@@ -118,7 +118,11 @@ SELECT
     sa.role_name,
     100.00::NUMERIC(5,2) AS max_pos_discount_pct,
     'System SuperAdmin'::TEXT AS designation_name,
-    sa.supervisor_pin_hash
+    sa.supervisor_pin_hash,
+    TRUE::BOOLEAN AS all_branches_access,
+    '{}'::UUID[] AS allowed_branch_ids,
+    '{}'::UUID[] AS allowed_terminal_ids,
+    NULL::UUID AS default_terminal_id
 FROM businesses b
 CROSS JOIN sa_membership sa
 WHERE b.is_active = TRUE
@@ -147,6 +151,10 @@ type GetAllBusinessContextsForSuperAdminRow struct {
 	MaxPosDiscountPct  decimal.Decimal `json:"max_pos_discount_pct"`
 	DesignationName    string          `json:"designation_name"`
 	SupervisorPinHash  string          `json:"supervisor_pin_hash"`
+	AllBranchesAccess  bool            `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID     `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID     `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID   `json:"default_terminal_id"`
 }
 
 func (q *Queries) GetAllBusinessContextsForSuperAdmin(ctx context.Context, userID uuid.UUID) ([]GetAllBusinessContextsForSuperAdminRow, error) {
@@ -180,6 +188,10 @@ func (q *Queries) GetAllBusinessContextsForSuperAdmin(ctx context.Context, userI
 			&i.MaxPosDiscountPct,
 			&i.DesignationName,
 			&i.SupervisorPinHash,
+			&i.AllBranchesAccess,
+			&i.AllowedBranchIds,
+			&i.AllowedTerminalIds,
+			&i.DefaultTerminalID,
 		); err != nil {
 			return nil, err
 		}
@@ -248,7 +260,11 @@ SELECT
     r.name AS role_name,
     100.00::NUMERIC(5,2) AS max_pos_discount_pct,
     'System SuperAdmin'::TEXT AS designation_name,
-    ubr.supervisor_pin_hash
+    ubr.supervisor_pin_hash,
+    TRUE::BOOLEAN AS all_branches_access,
+    '{}'::UUID[] AS allowed_branch_ids,
+    '{}'::UUID[] AS allowed_terminal_ids,
+    NULL::UUID AS default_terminal_id
 FROM users u
 JOIN user_business_roles ubr ON ubr.user_id = u.id AND ubr.is_active = TRUE
 JOIN roles r ON r.id = ubr.role_id AND r.code = 'SuperAdmin'
@@ -285,6 +301,10 @@ type GetSuperAdminContextForBusinessRow struct {
 	MaxPosDiscountPct  decimal.Decimal `json:"max_pos_discount_pct"`
 	DesignationName    string          `json:"designation_name"`
 	SupervisorPinHash  string          `json:"supervisor_pin_hash"`
+	AllBranchesAccess  bool            `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID     `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID     `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID   `json:"default_terminal_id"`
 }
 
 func (q *Queries) GetSuperAdminContextForBusiness(ctx context.Context, arg GetSuperAdminContextForBusinessParams) (GetSuperAdminContextForBusinessRow, error) {
@@ -313,6 +333,10 @@ func (q *Queries) GetSuperAdminContextForBusiness(ctx context.Context, arg GetSu
 		&i.MaxPosDiscountPct,
 		&i.DesignationName,
 		&i.SupervisorPinHash,
+		&i.AllBranchesAccess,
+		&i.AllowedBranchIds,
+		&i.AllowedTerminalIds,
+		&i.DefaultTerminalID,
 	)
 	return i, err
 }
@@ -339,7 +363,11 @@ SELECT
     r.name AS role_name,
     COALESCE(d.max_pos_discount_pct, 100.00)::NUMERIC(5,2) AS max_pos_discount_pct,
     COALESCE(d.name, r.name)::TEXT AS designation_name,
-    ubr.supervisor_pin_hash
+    ubr.supervisor_pin_hash,
+    ubr.all_branches_access,
+    ubr.allowed_branch_ids,
+    ubr.allowed_terminal_ids,
+    ubr.default_terminal_id
 FROM user_business_roles ubr
 JOIN businesses b ON b.id = ubr.business_id AND b.is_active = TRUE
 JOIN roles r ON r.id = ubr.role_id
@@ -371,6 +399,10 @@ type GetUserBusinessContextsRow struct {
 	MaxPosDiscountPct  decimal.Decimal `json:"max_pos_discount_pct"`
 	DesignationName    string          `json:"designation_name"`
 	SupervisorPinHash  string          `json:"supervisor_pin_hash"`
+	AllBranchesAccess  bool            `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID     `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID     `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID   `json:"default_terminal_id"`
 }
 
 func (q *Queries) GetUserBusinessContexts(ctx context.Context, userID uuid.UUID) ([]GetUserBusinessContextsRow, error) {
@@ -404,6 +436,10 @@ func (q *Queries) GetUserBusinessContexts(ctx context.Context, userID uuid.UUID)
 			&i.MaxPosDiscountPct,
 			&i.DesignationName,
 			&i.SupervisorPinHash,
+			&i.AllBranchesAccess,
+			&i.AllowedBranchIds,
+			&i.AllowedTerminalIds,
+			&i.DefaultTerminalID,
 		); err != nil {
 			return nil, err
 		}
@@ -489,7 +525,11 @@ SELECT
     r.name AS role_name,
     COALESCE(d.max_pos_discount_pct, 100.00)::NUMERIC(5,2) AS max_pos_discount_pct,
     COALESCE(d.name, r.name)::TEXT AS designation_name,
-    ubr.supervisor_pin_hash
+    ubr.supervisor_pin_hash,
+    ubr.all_branches_access,
+    ubr.allowed_branch_ids,
+    ubr.allowed_terminal_ids,
+    ubr.default_terminal_id
 FROM user_business_roles ubr
 JOIN users u ON u.id = ubr.user_id AND u.is_active = TRUE
 JOIN businesses b ON b.id = ubr.business_id AND b.is_active = TRUE
@@ -528,6 +568,10 @@ type GetUserRoleForBusinessRow struct {
 	MaxPosDiscountPct  decimal.Decimal `json:"max_pos_discount_pct"`
 	DesignationName    string          `json:"designation_name"`
 	SupervisorPinHash  string          `json:"supervisor_pin_hash"`
+	AllBranchesAccess  bool            `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID     `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID     `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID   `json:"default_terminal_id"`
 }
 
 func (q *Queries) GetUserRoleForBusiness(ctx context.Context, arg GetUserRoleForBusinessParams) (GetUserRoleForBusinessRow, error) {
@@ -557,6 +601,10 @@ func (q *Queries) GetUserRoleForBusiness(ctx context.Context, arg GetUserRoleFor
 		&i.MaxPosDiscountPct,
 		&i.DesignationName,
 		&i.SupervisorPinHash,
+		&i.AllBranchesAccess,
+		&i.AllowedBranchIds,
+		&i.AllowedTerminalIds,
+		&i.DefaultTerminalID,
 	)
 	return i, err
 }
@@ -590,6 +638,51 @@ WHERE user_id = $1 AND used_at IS NULL
 func (q *Queries) InvalidateUnusedPasswordResetTokens(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, invalidateUnusedPasswordResetTokens, userID)
 	return err
+}
+
+const listActiveTerminalsForBusiness = `-- name: ListActiveTerminalsForBusiness :many
+SELECT id, business_id, branch_id, code, name, hardware_serial, is_active
+FROM terminals
+WHERE business_id = $1 AND is_active = TRUE
+ORDER BY code ASC
+`
+
+type ListActiveTerminalsForBusinessRow struct {
+	ID             uuid.UUID `json:"id"`
+	BusinessID     uuid.UUID `json:"business_id"`
+	BranchID       uuid.UUID `json:"branch_id"`
+	Code           string    `json:"code"`
+	Name           string    `json:"name"`
+	HardwareSerial string    `json:"hardware_serial"`
+	IsActive       bool      `json:"is_active"`
+}
+
+func (q *Queries) ListActiveTerminalsForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListActiveTerminalsForBusinessRow, error) {
+	rows, err := q.db.Query(ctx, listActiveTerminalsForBusiness, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveTerminalsForBusinessRow{}
+	for rows.Next() {
+		var i ListActiveTerminalsForBusinessRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.BranchID,
+			&i.Code,
+			&i.Name,
+			&i.HardwareSerial,
+			&i.IsActive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBranchesForBusiness = `-- name: ListBranchesForBusiness :many

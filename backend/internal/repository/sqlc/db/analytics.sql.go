@@ -43,6 +43,101 @@ func (q *Queries) GetBusinessKPISummary(ctx context.Context, id uuid.UUID) (GetB
 	return i, err
 }
 
+const getOverviewCompanySummary = `-- name: GetOverviewCompanySummary :one
+SELECT
+    b.id AS business_id,
+    b.name AS business_name,
+    COALESCE(NULLIF(b.trade_name, ''), b.name)::TEXT AS trade_name,
+    b.legal_name,
+    b.tax_registration_no,
+    b.base_currency,
+    COALESCE(NULLIF(b.industry_profile, ''), 'retail')::TEXT AS industry_profile,
+    COALESCE(NULLIF(b.default_language, ''), 'en')::TEXT AS default_language,
+    (SELECT COUNT(*)::INT FROM branches br WHERE br.business_id = b.id) AS total_branches,
+    (SELECT COUNT(*)::INT FROM branches br WHERE br.business_id = b.id AND br.is_active = TRUE) AS active_branches,
+    (SELECT COUNT(*)::INT FROM warehouses wh WHERE wh.business_id = b.id AND wh.is_active = TRUE) AS total_warehouses,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = b.id) AS total_terminals,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = b.id AND tm.is_active = TRUE) AS active_terminals,
+    (SELECT COUNT(DISTINCT ps.terminal_id)::INT FROM pos_shifts ps WHERE ps.business_id = b.id AND ps.status = 'OPEN') AS open_shift_terminals,
+    (SELECT COUNT(*)::INT FROM user_business_roles ubr WHERE ubr.business_id = b.id) AS total_staff,
+    (SELECT COUNT(*)::INT FROM user_business_roles ubr WHERE ubr.business_id = b.id AND ubr.is_active = TRUE) AS active_staff,
+    (SELECT COUNT(*)::INT FROM brands bd WHERE bd.business_id = b.id AND bd.is_active = TRUE) AS total_brands,
+    (SELECT COUNT(*)::INT FROM categories ct WHERE ct.business_id = b.id) AS total_categories,
+    (SELECT COUNT(*)::INT FROM products pr WHERE pr.business_id = b.id AND pr.is_active = TRUE AND pr.is_archived = FALSE) AS active_skus,
+    (SELECT COUNT(*)::INT FROM customers cu WHERE cu.business_id = b.id) AS total_customers,
+    (SELECT COUNT(*)::INT FROM suppliers sp WHERE sp.business_id = b.id) AS total_suppliers,
+    COALESCE((
+        SELECT SUM(ib.remaining_qty)
+        FROM inventory_batches ib
+        WHERE ib.business_id = b.id AND ib.remaining_qty > 0
+    ), 0)::NUMERIC(19,4) AS total_stock_units,
+    COALESCE((
+        SELECT SUM(ib.remaining_qty * ib.unit_cost)
+        FROM inventory_batches ib
+        WHERE ib.business_id = b.id AND ib.remaining_qty > 0
+    ), 0)::NUMERIC(19,4) AS total_fifo_valuation
+FROM businesses b
+WHERE b.id = $1
+LIMIT 1
+`
+
+type GetOverviewCompanySummaryRow struct {
+	BusinessID         uuid.UUID       `json:"business_id"`
+	BusinessName       string          `json:"business_name"`
+	TradeName          string          `json:"trade_name"`
+	LegalName          string          `json:"legal_name"`
+	TaxRegistrationNo  string          `json:"tax_registration_no"`
+	BaseCurrency       string          `json:"base_currency"`
+	IndustryProfile    string          `json:"industry_profile"`
+	DefaultLanguage    string          `json:"default_language"`
+	TotalBranches      int32           `json:"total_branches"`
+	ActiveBranches     int32           `json:"active_branches"`
+	TotalWarehouses    int32           `json:"total_warehouses"`
+	TotalTerminals     int32           `json:"total_terminals"`
+	ActiveTerminals    int32           `json:"active_terminals"`
+	OpenShiftTerminals int32           `json:"open_shift_terminals"`
+	TotalStaff         int32           `json:"total_staff"`
+	ActiveStaff        int32           `json:"active_staff"`
+	TotalBrands        int32           `json:"total_brands"`
+	TotalCategories    int32           `json:"total_categories"`
+	ActiveSkus         int32           `json:"active_skus"`
+	TotalCustomers     int32           `json:"total_customers"`
+	TotalSuppliers     int32           `json:"total_suppliers"`
+	TotalStockUnits    decimal.Decimal `json:"total_stock_units"`
+	TotalFifoValuation decimal.Decimal `json:"total_fifo_valuation"`
+}
+
+func (q *Queries) GetOverviewCompanySummary(ctx context.Context, id uuid.UUID) (GetOverviewCompanySummaryRow, error) {
+	row := q.db.QueryRow(ctx, getOverviewCompanySummary, id)
+	var i GetOverviewCompanySummaryRow
+	err := row.Scan(
+		&i.BusinessID,
+		&i.BusinessName,
+		&i.TradeName,
+		&i.LegalName,
+		&i.TaxRegistrationNo,
+		&i.BaseCurrency,
+		&i.IndustryProfile,
+		&i.DefaultLanguage,
+		&i.TotalBranches,
+		&i.ActiveBranches,
+		&i.TotalWarehouses,
+		&i.TotalTerminals,
+		&i.ActiveTerminals,
+		&i.OpenShiftTerminals,
+		&i.TotalStaff,
+		&i.ActiveStaff,
+		&i.TotalBrands,
+		&i.TotalCategories,
+		&i.ActiveSkus,
+		&i.TotalCustomers,
+		&i.TotalSuppliers,
+		&i.TotalStockUnits,
+		&i.TotalFifoValuation,
+	)
+	return i, err
+}
+
 const getOverviewGLAndFiscalSummary = `-- name: GetOverviewGLAndFiscalSummary :one
 SELECT
     (
@@ -173,6 +268,7 @@ WITH inv_agg AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 ),
 item_agg AS (
     SELECT
@@ -185,6 +281,7 @@ item_agg AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 ),
 held_agg AS (
     SELECT
@@ -194,6 +291,7 @@ held_agg AS (
     WHERE sb.business_id = $1
       AND sb.status = 'HELD'
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR sb.branch_id = $4::UUID)
+      AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR sb.terminal_id = $6::UUID)
 )
 SELECT
     inv_agg.paid_order_count,
@@ -220,6 +318,7 @@ type GetOverviewPeriodSummaryParams struct {
 	Column3    pgtype.Timestamptz `json:"column_3"`
 	Column4    uuid.UUID          `json:"column_4"`
 	Column5    uuid.UUID          `json:"column_5"`
+	Column6    uuid.UUID          `json:"column_6"`
 }
 
 type GetOverviewPeriodSummaryRow struct {
@@ -245,6 +344,7 @@ func (q *Queries) GetOverviewPeriodSummary(ctx context.Context, arg GetOverviewP
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	var i GetOverviewPeriodSummaryRow
 	err := row.Scan(
@@ -1237,6 +1337,180 @@ func (q *Queries) ListLowStockAlertsOverview(ctx context.Context, arg ListLowSto
 	return items, nil
 }
 
+const listOverviewBranchPerformance = `-- name: ListOverviewBranchPerformance :many
+WITH br_sales AS (
+    SELECT
+        si.branch_id,
+        COUNT(*) FILTER (WHERE si.status = 'PAID')::INT AS paid_orders,
+        COUNT(*) FILTER (WHERE si.status IN ('VOID', 'REFUND', 'REFUNDED'))::INT AS refund_void_count,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS discount_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS tax_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs
+    FROM sales_invoices si
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.branch_id
+),
+br_items AS (
+    SELECT
+        si.branch_id,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
+    FROM sales_invoice_items sii
+    JOIN sales_invoices si ON si.id = sii.invoice_id
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.branch_id
+),
+br_stock AS (
+    SELECT
+        ib.branch_id,
+        COALESCE(SUM(ib.remaining_qty), 0)::NUMERIC(19,4) AS fifo_stock_units,
+        COALESCE(SUM(ib.remaining_qty * ib.unit_cost), 0)::NUMERIC(19,4) AS fifo_valuation
+    FROM inventory_batches ib
+    WHERE ib.business_id = $1
+      AND ib.remaining_qty > 0
+    GROUP BY ib.branch_id
+),
+br_held AS (
+    SELECT
+        sb.branch_id,
+        COUNT(*)::INT AS held_bill_count,
+        COALESCE(SUM(sb.grand_total), 0)::NUMERIC(19,4) AS held_bill_total
+    FROM suspended_bills sb
+    WHERE sb.business_id = $1
+      AND sb.status = 'HELD'
+    GROUP BY sb.branch_id
+)
+SELECT
+    br.id AS branch_id,
+    br.code AS branch_code,
+    br.name AS branch_name,
+    br.city,
+    br.country_code,
+    br.country_name,
+    br.address,
+    br.is_warehouse,
+    br.is_active,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = br.business_id AND tm.branch_id = br.id) AS terminal_count,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = br.business_id AND tm.branch_id = br.id AND tm.is_active = TRUE) AS active_terminal_count,
+    (SELECT COUNT(DISTINCT ps.terminal_id)::INT FROM pos_shifts ps WHERE ps.business_id = br.business_id AND ps.branch_id = br.id AND ps.status = 'OPEN') AS open_shift_count,
+    (
+        SELECT COUNT(*)::INT
+        FROM user_business_roles ubr
+        WHERE ubr.business_id = br.business_id
+          AND ubr.is_active = TRUE
+          AND (
+              ubr.all_branches_access = TRUE
+              OR ubr.branch_id IS NULL
+              OR ubr.branch_id = br.id
+              OR br.id = ANY(ubr.allowed_branch_ids)
+          )
+    ) AS staff_count,
+    COALESCE(bs.paid_orders, 0)::INT AS paid_orders,
+    COALESCE(bs.refund_void_count, 0)::INT AS refund_void_count,
+    COALESCE(bi.units_sold, 0)::NUMERIC(19,4) AS units_sold,
+    COALESCE(bs.gross_subtotal, 0)::NUMERIC(19,4) AS gross_subtotal,
+    COALESCE(bs.discount_total, 0)::NUMERIC(19,4) AS discount_total,
+    COALESCE(bs.tax_total, 0)::NUMERIC(19,4) AS tax_total,
+    COALESCE(bs.paid_revenue, 0)::NUMERIC(19,4) AS paid_revenue,
+    COALESCE(bs.total_cogs, 0)::NUMERIC(19,4) AS total_cogs,
+    COALESCE(bh.held_bill_count, 0)::INT AS held_bill_count,
+    COALESCE(bh.held_bill_total, 0)::NUMERIC(19,4) AS held_bill_total,
+    COALESCE(bst.fifo_stock_units, 0)::NUMERIC(19,4) AS fifo_stock_units,
+    COALESCE(bst.fifo_valuation, 0)::NUMERIC(19,4) AS fifo_valuation
+FROM branches br
+LEFT JOIN br_sales bs ON bs.branch_id = br.id
+LEFT JOIN br_items bi ON bi.branch_id = br.id
+LEFT JOIN br_stock bst ON bst.branch_id = br.id
+LEFT JOIN br_held bh ON bh.branch_id = br.id
+WHERE br.business_id = $1
+ORDER BY COALESCE(bs.paid_revenue, 0) DESC, br.code ASC
+`
+
+type ListOverviewBranchPerformanceParams struct {
+	BusinessID uuid.UUID          `json:"business_id"`
+	Column2    pgtype.Timestamptz `json:"column_2"`
+	Column3    pgtype.Timestamptz `json:"column_3"`
+}
+
+type ListOverviewBranchPerformanceRow struct {
+	BranchID            uuid.UUID       `json:"branch_id"`
+	BranchCode          string          `json:"branch_code"`
+	BranchName          string          `json:"branch_name"`
+	City                string          `json:"city"`
+	CountryCode         string          `json:"country_code"`
+	CountryName         string          `json:"country_name"`
+	Address             string          `json:"address"`
+	IsWarehouse         bool            `json:"is_warehouse"`
+	IsActive            bool            `json:"is_active"`
+	TerminalCount       int32           `json:"terminal_count"`
+	ActiveTerminalCount int32           `json:"active_terminal_count"`
+	OpenShiftCount      int32           `json:"open_shift_count"`
+	StaffCount          int32           `json:"staff_count"`
+	PaidOrders          int32           `json:"paid_orders"`
+	RefundVoidCount     int32           `json:"refund_void_count"`
+	UnitsSold           decimal.Decimal `json:"units_sold"`
+	GrossSubtotal       decimal.Decimal `json:"gross_subtotal"`
+	DiscountTotal       decimal.Decimal `json:"discount_total"`
+	TaxTotal            decimal.Decimal `json:"tax_total"`
+	PaidRevenue         decimal.Decimal `json:"paid_revenue"`
+	TotalCogs           decimal.Decimal `json:"total_cogs"`
+	HeldBillCount       int32           `json:"held_bill_count"`
+	HeldBillTotal       decimal.Decimal `json:"held_bill_total"`
+	FifoStockUnits      decimal.Decimal `json:"fifo_stock_units"`
+	FifoValuation       decimal.Decimal `json:"fifo_valuation"`
+}
+
+func (q *Queries) ListOverviewBranchPerformance(ctx context.Context, arg ListOverviewBranchPerformanceParams) ([]ListOverviewBranchPerformanceRow, error) {
+	rows, err := q.db.Query(ctx, listOverviewBranchPerformance, arg.BusinessID, arg.Column2, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOverviewBranchPerformanceRow{}
+	for rows.Next() {
+		var i ListOverviewBranchPerformanceRow
+		if err := rows.Scan(
+			&i.BranchID,
+			&i.BranchCode,
+			&i.BranchName,
+			&i.City,
+			&i.CountryCode,
+			&i.CountryName,
+			&i.Address,
+			&i.IsWarehouse,
+			&i.IsActive,
+			&i.TerminalCount,
+			&i.ActiveTerminalCount,
+			&i.OpenShiftCount,
+			&i.StaffCount,
+			&i.PaidOrders,
+			&i.RefundVoidCount,
+			&i.UnitsSold,
+			&i.GrossSubtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.PaidRevenue,
+			&i.TotalCogs,
+			&i.HeldBillCount,
+			&i.HeldBillTotal,
+			&i.FifoStockUnits,
+			&i.FifoValuation,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOverviewGenderMix = `-- name: ListOverviewGenderMix :many
 SELECT
     UPPER(COALESCE(c.gender_segment, 'UNISEX'))::TEXT AS gender_segment,
@@ -1308,6 +1582,7 @@ WHERE si.business_id = $1
   AND si.created_at <= $3::TIMESTAMPTZ
   AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
   AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+  AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 GROUP BY ip.payment_method
 ORDER BY total_collected DESC, ip.payment_method ASC
 `
@@ -1318,6 +1593,7 @@ type ListOverviewPaymentMixParams struct {
 	Column3    pgtype.Timestamptz `json:"column_3"`
 	Column4    uuid.UUID          `json:"column_4"`
 	Column5    uuid.UUID          `json:"column_5"`
+	Column6    uuid.UUID          `json:"column_6"`
 }
 
 type ListOverviewPaymentMixRow struct {
@@ -1333,6 +1609,7 @@ func (q *Queries) ListOverviewPaymentMix(ctx context.Context, arg ListOverviewPa
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return nil, err
@@ -1366,6 +1643,7 @@ WITH inv_buckets AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($7::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $7::UUID)
     GROUP BY 1
 ),
 item_buckets AS (
@@ -1385,6 +1663,7 @@ item_buckets AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($7::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $7::UUID)
     GROUP BY 1
 )
 SELECT
@@ -1410,6 +1689,7 @@ type ListOverviewSalesTimeBucketsParams struct {
 	Column4    uuid.UUID          `json:"column_4"`
 	Column5    uuid.UUID          `json:"column_5"`
 	Column6    string             `json:"column_6"`
+	Column7    uuid.UUID          `json:"column_7"`
 }
 
 type ListOverviewSalesTimeBucketsRow struct {
@@ -1433,6 +1713,7 @@ func (q *Queries) ListOverviewSalesTimeBuckets(ctx context.Context, arg ListOver
 		arg.Column4,
 		arg.Column5,
 		arg.Column6,
+		arg.Column7,
 	)
 	if err != nil {
 		return nil, err
@@ -1452,6 +1733,215 @@ func (q *Queries) ListOverviewSalesTimeBuckets(ctx context.Context, arg ListOver
 			&i.WomenUnits,
 			&i.MenUnits,
 			&i.UnisexUnits,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOverviewTerminalPerformance = `-- name: ListOverviewTerminalPerformance :many
+WITH tm_sales AS (
+    SELECT
+        si.terminal_id,
+        COUNT(*) FILTER (WHERE si.status = 'PAID')::INT AS paid_orders,
+        COUNT(*) FILTER (WHERE si.status IN ('VOID', 'REFUND', 'REFUNDED'))::INT AS refund_void_count,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS discount_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS tax_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs
+    FROM sales_invoices si
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.terminal_id
+),
+tm_items AS (
+    SELECT
+        si.terminal_id,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
+    FROM sales_invoice_items sii
+    JOIN sales_invoices si ON si.id = sii.invoice_id
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.terminal_id
+),
+tm_payments AS (
+    SELECT
+        si.terminal_id,
+        COALESCE(SUM(CASE WHEN UPPER(ip.payment_method) = 'CASH' THEN ip.amount ELSE 0 END), 0)::NUMERIC(19,4) AS cash_sales,
+        COALESCE(SUM(CASE WHEN UPPER(ip.payment_method) = 'CARD' THEN ip.amount ELSE 0 END), 0)::NUMERIC(19,4) AS card_sales,
+        COALESCE(SUM(CASE WHEN UPPER(ip.payment_method) NOT IN ('CASH', 'CARD') THEN ip.amount ELSE 0 END), 0)::NUMERIC(19,4) AS qr_other_sales
+    FROM invoice_payments ip
+    JOIN sales_invoices si ON si.id = ip.invoice_id
+    WHERE si.business_id = $1
+      AND si.status = 'PAID'
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.terminal_id
+),
+tm_held AS (
+    SELECT
+        sb.terminal_id,
+        COUNT(*)::INT AS held_bill_count,
+        COALESCE(SUM(sb.grand_total), 0)::NUMERIC(19,4) AS held_bill_total
+    FROM suspended_bills sb
+    WHERE sb.business_id = $1
+      AND sb.status = 'HELD'
+    GROUP BY sb.terminal_id
+)
+SELECT
+    tm.id AS terminal_id,
+    tm.code AS terminal_code,
+    tm.name AS terminal_name,
+    tm.hardware_serial,
+    tm.is_active,
+    br.id AS branch_id,
+    br.code AS branch_code,
+    br.name AS branch_name,
+    COALESCE((
+        SELECT ps.status
+        FROM pos_shifts ps
+        WHERE ps.business_id = tm.business_id AND ps.terminal_id = tm.id
+        ORDER BY CASE WHEN ps.status = 'OPEN' THEN 0 ELSE 1 END, ps.opened_at DESC
+        LIMIT 1
+    ), 'CLOSED')::TEXT AS shift_status,
+    COALESCE((
+        SELECT u.full_name
+        FROM pos_shifts ps
+        JOIN users u ON u.id = ps.cashier_user_id
+        WHERE ps.business_id = tm.business_id AND ps.terminal_id = tm.id
+        ORDER BY CASE WHEN ps.status = 'OPEN' THEN 0 ELSE 1 END, ps.opened_at DESC
+        LIMIT 1
+    ), 'Unassigned')::TEXT AS active_cashier_name,
+    COALESCE((
+        SELECT ps.opening_float
+        FROM pos_shifts ps
+        WHERE ps.business_id = tm.business_id AND ps.terminal_id = tm.id
+        ORDER BY CASE WHEN ps.status = 'OPEN' THEN 0 ELSE 1 END, ps.opened_at DESC
+        LIMIT 1
+    ), 0)::NUMERIC(19,4) AS opening_float,
+    COALESCE(ts.paid_orders, 0)::INT AS paid_orders,
+    COALESCE(ts.refund_void_count, 0)::INT AS refund_void_count,
+    COALESCE(ti.units_sold, 0)::NUMERIC(19,4) AS units_sold,
+    COALESCE(ts.gross_subtotal, 0)::NUMERIC(19,4) AS gross_subtotal,
+    COALESCE(ts.discount_total, 0)::NUMERIC(19,4) AS discount_total,
+    COALESCE(ts.tax_total, 0)::NUMERIC(19,4) AS tax_total,
+    COALESCE(ts.paid_revenue, 0)::NUMERIC(19,4) AS paid_revenue,
+    COALESCE(ts.total_cogs, 0)::NUMERIC(19,4) AS total_cogs,
+    COALESCE(tp.cash_sales, 0)::NUMERIC(19,4) AS cash_sales,
+    COALESCE(tp.card_sales, 0)::NUMERIC(19,4) AS card_sales,
+    COALESCE(tp.qr_other_sales, 0)::NUMERIC(19,4) AS qr_other_sales,
+    COALESCE(th.held_bill_count, 0)::INT AS held_bill_count,
+    COALESCE(th.held_bill_total, 0)::NUMERIC(19,4) AS held_bill_total,
+    COALESCE((
+        SELECT si2.invoice_number
+        FROM sales_invoices si2
+        WHERE si2.business_id = tm.business_id AND si2.terminal_id = tm.id AND si2.status = 'PAID'
+        ORDER BY si2.created_at DESC
+        LIMIT 1
+    ), '')::TEXT AS last_invoice_number,
+    COALESCE((
+        SELECT TO_CHAR(si2.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+        FROM sales_invoices si2
+        WHERE si2.business_id = tm.business_id AND si2.terminal_id = tm.id AND si2.status = 'PAID'
+        ORDER BY si2.created_at DESC
+        LIMIT 1
+    ), '')::TEXT AS last_sale_at
+FROM terminals tm
+JOIN branches br ON br.id = tm.branch_id
+LEFT JOIN tm_sales ts ON ts.terminal_id = tm.id
+LEFT JOIN tm_items ti ON ti.terminal_id = tm.id
+LEFT JOIN tm_payments tp ON tp.terminal_id = tm.id
+LEFT JOIN tm_held th ON th.terminal_id = tm.id
+WHERE tm.business_id = $1
+  AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR tm.branch_id = $4::UUID)
+ORDER BY COALESCE(ts.paid_revenue, 0) DESC, br.code ASC, tm.code ASC
+`
+
+type ListOverviewTerminalPerformanceParams struct {
+	BusinessID uuid.UUID          `json:"business_id"`
+	Column2    pgtype.Timestamptz `json:"column_2"`
+	Column3    pgtype.Timestamptz `json:"column_3"`
+	Column4    uuid.UUID          `json:"column_4"`
+}
+
+type ListOverviewTerminalPerformanceRow struct {
+	TerminalID        uuid.UUID       `json:"terminal_id"`
+	TerminalCode      string          `json:"terminal_code"`
+	TerminalName      string          `json:"terminal_name"`
+	HardwareSerial    string          `json:"hardware_serial"`
+	IsActive          bool            `json:"is_active"`
+	BranchID          uuid.UUID       `json:"branch_id"`
+	BranchCode        string          `json:"branch_code"`
+	BranchName        string          `json:"branch_name"`
+	ShiftStatus       string          `json:"shift_status"`
+	ActiveCashierName string          `json:"active_cashier_name"`
+	OpeningFloat      decimal.Decimal `json:"opening_float"`
+	PaidOrders        int32           `json:"paid_orders"`
+	RefundVoidCount   int32           `json:"refund_void_count"`
+	UnitsSold         decimal.Decimal `json:"units_sold"`
+	GrossSubtotal     decimal.Decimal `json:"gross_subtotal"`
+	DiscountTotal     decimal.Decimal `json:"discount_total"`
+	TaxTotal          decimal.Decimal `json:"tax_total"`
+	PaidRevenue       decimal.Decimal `json:"paid_revenue"`
+	TotalCogs         decimal.Decimal `json:"total_cogs"`
+	CashSales         decimal.Decimal `json:"cash_sales"`
+	CardSales         decimal.Decimal `json:"card_sales"`
+	QrOtherSales      decimal.Decimal `json:"qr_other_sales"`
+	HeldBillCount     int32           `json:"held_bill_count"`
+	HeldBillTotal     decimal.Decimal `json:"held_bill_total"`
+	LastInvoiceNumber string          `json:"last_invoice_number"`
+	LastSaleAt        string          `json:"last_sale_at"`
+}
+
+func (q *Queries) ListOverviewTerminalPerformance(ctx context.Context, arg ListOverviewTerminalPerformanceParams) ([]ListOverviewTerminalPerformanceRow, error) {
+	rows, err := q.db.Query(ctx, listOverviewTerminalPerformance,
+		arg.BusinessID,
+		arg.Column2,
+		arg.Column3,
+		arg.Column4,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOverviewTerminalPerformanceRow{}
+	for rows.Next() {
+		var i ListOverviewTerminalPerformanceRow
+		if err := rows.Scan(
+			&i.TerminalID,
+			&i.TerminalCode,
+			&i.TerminalName,
+			&i.HardwareSerial,
+			&i.IsActive,
+			&i.BranchID,
+			&i.BranchCode,
+			&i.BranchName,
+			&i.ShiftStatus,
+			&i.ActiveCashierName,
+			&i.OpeningFloat,
+			&i.PaidOrders,
+			&i.RefundVoidCount,
+			&i.UnitsSold,
+			&i.GrossSubtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.PaidRevenue,
+			&i.TotalCogs,
+			&i.CashSales,
+			&i.CardSales,
+			&i.QrOtherSales,
+			&i.HeldBillCount,
+			&i.HeldBillTotal,
+			&i.LastInvoiceNumber,
+			&i.LastSaleAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1980,6 +2470,8 @@ SELECT
     si.order_channel,
     si.created_at,
     br.name AS branch_name,
+    COALESCE(tm.code, '')::TEXT AS terminal_code,
+    COALESCE(tm.name, '')::TEXT AS terminal_name,
     COALESCE(u.full_name, 'Cashier')::TEXT AS cashier_name,
     COALESCE(c.name, 'Walk-in Guest')::TEXT AS customer_name,
     COALESCE(NULLIF(c.avatar_url, ''), '')::TEXT AS customer_avatar,
@@ -2013,6 +2505,7 @@ SELECT
     ), '[]'::jsonb)::JSONB AS item_images_json
 FROM sales_invoices si
 JOIN branches br ON br.id = si.branch_id
+LEFT JOIN terminals tm ON tm.id = si.terminal_id
 LEFT JOIN customers c ON c.id = si.customer_id
 LEFT JOIN users u ON u.id = si.cashier_user_id
 WHERE si.business_id = $1
@@ -2020,6 +2513,7 @@ WHERE si.business_id = $1
   AND si.created_at <= $3::TIMESTAMPTZ
   AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
   AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+  AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 ORDER BY si.created_at DESC
 LIMIT 20
 `
@@ -2030,6 +2524,7 @@ type ListRecentPOSActivityScopedParams struct {
 	Column3    pgtype.Timestamptz `json:"column_3"`
 	Column4    uuid.UUID          `json:"column_4"`
 	Column5    uuid.UUID          `json:"column_5"`
+	Column6    uuid.UUID          `json:"column_6"`
 }
 
 type ListRecentPOSActivityScopedRow struct {
@@ -2042,6 +2537,8 @@ type ListRecentPOSActivityScopedRow struct {
 	OrderChannel       string             `json:"order_channel"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	BranchName         string             `json:"branch_name"`
+	TerminalCode       string             `json:"terminal_code"`
+	TerminalName       string             `json:"terminal_name"`
 	CashierName        string             `json:"cashier_name"`
 	CustomerName       string             `json:"customer_name"`
 	CustomerAvatar     string             `json:"customer_avatar"`
@@ -2059,6 +2556,7 @@ func (q *Queries) ListRecentPOSActivityScoped(ctx context.Context, arg ListRecen
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return nil, err
@@ -2077,6 +2575,8 @@ func (q *Queries) ListRecentPOSActivityScoped(ctx context.Context, arg ListRecen
 			&i.OrderChannel,
 			&i.CreatedAt,
 			&i.BranchName,
+			&i.TerminalCode,
+			&i.TerminalName,
 			&i.CashierName,
 			&i.CustomerName,
 			&i.CustomerAvatar,

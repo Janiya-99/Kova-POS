@@ -20,6 +20,9 @@ export interface TenantContext {
   base_currency: string;
   branch_id: string;
   terminal_id: string;
+  all_branches_access?: boolean;
+  allowed_branch_ids?: string[];
+  allowed_terminal_ids?: string[];
   role_code: string;
   role_name: string;
   designation_name?: string;

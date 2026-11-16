@@ -33,11 +33,61 @@ type TenantContext struct {
 	IndustryProfile      string          `json:"industry_profile"`
 	BranchID             uuid.UUID       `json:"branch_id"`
 	TerminalID           uuid.UUID       `json:"terminal_id"`
+	AllBranchesAccess    bool            `json:"all_branches_access"`
+	AllowedBranchIDs     []string        `json:"allowed_branch_ids"`
+	AllowedTerminalIDs   []string        `json:"allowed_terminal_ids"`
 	RoleCode             string          `json:"role_code"`
 	RoleName             string          `json:"role_name"`
 	DesignationName      string          `json:"designation_name"`
 	MaxPOSDiscountPct    decimal.Decimal `json:"max_pos_discount_pct"`
 	Permissions          []string        `json:"permissions"`
+}
+
+// HasAllBranchesAccess returns true if the user can access all company branches.
+func (tc TenantContext) HasAllBranchesAccess() bool {
+	return tc.RoleCode == "SuperAdmin" || tc.RoleCode == "BusinessOwner" || tc.AllBranchesAccess
+}
+
+// HasMultiBranchAccess returns true if the user can switch or view across multiple branches.
+func (tc TenantContext) HasMultiBranchAccess() bool {
+	return tc.HasAllBranchesAccess() || len(tc.AllowedBranchIDs) > 1
+}
+
+// CanAccessBranch returns true if the user is authorized for the given branch UUID.
+func (tc TenantContext) CanAccessBranch(branchID uuid.UUID) bool {
+	if branchID == uuid.Nil {
+		return tc.HasMultiBranchAccess()
+	}
+	if tc.HasAllBranchesAccess() {
+		return true
+	}
+	target := branchID.String()
+	if tc.BranchID == branchID {
+		return true
+	}
+	for _, id := range tc.AllowedBranchIDs {
+		if id == target {
+			return true
+		}
+	}
+	return false
+}
+
+// CanAccessTerminal returns true if the user is authorized for the given POS terminal UUID.
+func (tc TenantContext) CanAccessTerminal(terminalID uuid.UUID) bool {
+	if terminalID == uuid.Nil || tc.HasAllBranchesAccess() || len(tc.AllowedTerminalIDs) == 0 {
+		return true
+	}
+	target := terminalID.String()
+	if tc.TerminalID == terminalID {
+		return true
+	}
+	for _, id := range tc.AllowedTerminalIDs {
+		if id == target {
+			return true
+		}
+	}
+	return false
 }
 
 // PlatformAdminContext represents a verified Platform Control-Plane JWT identity.

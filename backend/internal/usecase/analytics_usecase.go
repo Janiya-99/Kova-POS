@@ -126,7 +126,7 @@ func resolveOverviewPersona(tc domain.TenantContext) (string, map[string]bool) {
 		"can_view_catalog":    has("catalog:view"),
 		"can_view_print":      has("print:view"),
 		"can_export_reports":  role == "EXECUTIVE" || role == "ACCOUNTANT" || has("analytics:export"),
-		"can_switch_branch":   IsMultiBranchRole(tc.RoleCode),
+		"can_switch_branch":   tc.HasMultiBranchAccess(),
 		"can_manage_settings": has("settings:view"),
 	}
 	return role, caps
@@ -176,22 +176,37 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 	tc domain.TenantContext,
 	period string,
 	requestedBranchID uuid.UUID,
+	requestedTerminalIDs ...uuid.UUID,
 ) (map[string]any, error) {
 	win := resolveOverviewWindow(period, time.Now())
 	persona, caps := resolveOverviewPersona(tc)
 
+	var requestedTerminalID uuid.UUID
+	if len(requestedTerminalIDs) > 0 {
+		requestedTerminalID = requestedTerminalIDs[0]
+	}
+
 	effectiveBranchID := uuid.Nil
 	scopeLabel := "All Branches"
-	if !IsMultiBranchRole(tc.RoleCode) || !caps["can_switch_branch"] {
+	if !tc.HasMultiBranchAccess() || !caps["can_switch_branch"] {
 		effectiveBranchID = tc.BranchID
 		scopeLabel = "Assigned Branch"
-	} else if requestedBranchID != uuid.Nil {
+	} else if requestedBranchID != uuid.Nil && tc.CanAccessBranch(requestedBranchID) {
 		effectiveBranchID = requestedBranchID
 		scopeLabel = "Selected Branch"
+	} else if !tc.HasAllBranchesAccess() && len(tc.AllowedBranchIDs) > 1 {
+		scopeLabel = "Assigned Branches"
+	}
+
+	effectiveTerminalID := uuid.Nil
+	if requestedTerminalID != uuid.Nil && tc.CanAccessTerminal(requestedTerminalID) {
+		effectiveTerminalID = requestedTerminalID
+	} else if !tc.HasAllBranchesAccess() && len(tc.AllowedTerminalIDs) == 1 && tc.TerminalID != uuid.Nil {
+		effectiveTerminalID = tc.TerminalID
 	}
 
 	cashierFilterID := uuid.Nil
-	if persona == "CASHIER" {
+	if persona == "CASHIER" && !tc.HasMultiBranchAccess() && len(tc.AllowedTerminalIDs) == 0 {
 		cashierFilterID = tc.UserID
 	}
 
@@ -206,6 +221,7 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		Column3:    toPG,
 		Column4:    effectiveBranchID,
 		Column5:    cashierFilterID,
+		Column6:    effectiveTerminalID,
 	})
 	if err != nil {
 		return nil, err
@@ -217,6 +233,7 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		Column3:    prevToPG,
 		Column4:    effectiveBranchID,
 		Column5:    cashierFilterID,
+		Column6:    effectiveTerminalID,
 	})
 	if err != nil {
 		return nil, err
@@ -229,6 +246,7 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		Column4:    effectiveBranchID,
 		Column5:    cashierFilterID,
 		Column6:    win.SQLGranularity,
+		Column7:    effectiveTerminalID,
 	})
 	if err != nil {
 		return nil, err
@@ -251,6 +269,7 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		Column3:    toPG,
 		Column4:    effectiveBranchID,
 		Column5:    cashierFilterID,
+		Column6:    effectiveTerminalID,
 	})
 	if err != nil {
 		return nil, err
@@ -262,6 +281,7 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		Column3:    toPG,
 		Column4:    effectiveBranchID,
 		Column5:    cashierFilterID,
+		Column6:    effectiveTerminalID,
 	})
 	if err != nil {
 		return nil, err
@@ -433,6 +453,8 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 			"order_channel":        r.OrderChannel,
 			"created_at":           r.CreatedAt,
 			"branch_name":          r.BranchName,
+			"terminal_code":        r.TerminalCode,
+			"terminal_name":        r.TerminalName,
 			"cashier_name":         r.CashierName,
 			"customer_name":        r.CustomerName,
 			"customer_avatar":      r.CustomerAvatar,
@@ -618,6 +640,152 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		kpiPayload["gross_margin_pct"] = marginPct.StringFixed(2)
 	}
 
+	// Build Company Overview, Branch-Wise Sales, and Terminal-Wise Sales telemetry
+	var companyOverview map[string]any
+	if compRow, compErr := a.queries.GetOverviewCompanySummary(ctx, tc.BusinessID); compErr == nil {
+		companyOverview = map[string]any{
+			"business_id":          compRow.BusinessID,
+			"business_name":        compRow.BusinessName,
+			"trade_name":           compRow.TradeName,
+			"legal_name":           compRow.LegalName,
+			"tax_registration_no":  compRow.TaxRegistrationNo,
+			"base_currency":        compRow.BaseCurrency,
+			"industry_profile":     compRow.IndustryProfile,
+			"default_language":     compRow.DefaultLanguage,
+			"total_branches":       compRow.TotalBranches,
+			"active_branches":      compRow.ActiveBranches,
+			"total_warehouses":     compRow.TotalWarehouses,
+			"total_terminals":      compRow.TotalTerminals,
+			"active_terminals":     compRow.ActiveTerminals,
+			"open_shift_terminals": compRow.OpenShiftTerminals,
+			"total_staff":          compRow.TotalStaff,
+			"active_staff":         compRow.ActiveStaff,
+			"total_brands":         compRow.TotalBrands,
+			"total_categories":     compRow.TotalCategories,
+			"active_skus":          compRow.ActiveSkus,
+			"total_customers":      compRow.TotalCustomers,
+			"total_suppliers":      compRow.TotalSuppliers,
+			"total_stock_units":    compRow.TotalStockUnits.Round(0).String(),
+			"total_fifo_valuation": compRow.TotalFifoValuation.StringFixed(2),
+			"period_paid_orders":   curr.PaidOrderCount,
+			"period_paid_revenue":  curr.PaidRevenue.StringFixed(2),
+			"period_tax_collected": curr.TotalTaxes.StringFixed(2),
+			"period_gross_profit":  grossProfit.StringFixed(2),
+		}
+	}
+
+	branchSalesOut := make([]map[string]any, 0)
+	if brRows, brErr := a.queries.ListOverviewBranchPerformance(ctx, db.ListOverviewBranchPerformanceParams{
+		BusinessID: tc.BusinessID,
+		Column2:    fromPG,
+		Column3:    toPG,
+	}); brErr == nil {
+		totalBranchRev := decimal.Zero
+		for _, br := range brRows {
+			if tc.CanAccessBranch(br.BranchID) {
+				totalBranchRev = totalBranchRev.Add(br.PaidRevenue)
+			}
+		}
+		for _, br := range brRows {
+			if !tc.CanAccessBranch(br.BranchID) {
+				continue
+			}
+			brProfit, brMargin := computeProfitAndMargin(br.PaidRevenue, br.TotalCogs)
+			brAOV := computeAverageOrderValue(br.PaidRevenue, br.PaidOrders)
+			entry := map[string]any{
+				"branch_id":             br.BranchID,
+				"branch_code":           br.BranchCode,
+				"branch_name":           br.BranchName,
+				"city":                  br.City,
+				"country_code":          br.CountryCode,
+				"country_name":          br.CountryName,
+				"address":               br.Address,
+				"is_warehouse":          br.IsWarehouse,
+				"is_active":             br.IsActive,
+				"terminal_count":        br.TerminalCount,
+				"active_terminal_count": br.ActiveTerminalCount,
+				"open_shift_count":      br.OpenShiftCount,
+				"staff_count":           br.StaffCount,
+				"paid_orders":           br.PaidOrders,
+				"refund_void_count":     br.RefundVoidCount,
+				"units_sold":            br.UnitsSold.Round(0).IntPart(),
+				"gross_subtotal":        br.GrossSubtotal.StringFixed(2),
+				"discount_total":        br.DiscountTotal.StringFixed(2),
+				"tax_total":             br.TaxTotal.StringFixed(2),
+				"paid_revenue":          br.PaidRevenue.StringFixed(2),
+				"average_order_value":   brAOV.StringFixed(2),
+				"revenue_share_pct":     computeSharePct(br.PaidRevenue, totalBranchRev).StringFixed(2),
+				"held_bill_count":       br.HeldBillCount,
+				"held_bill_total":       br.HeldBillTotal.StringFixed(2),
+				"fifo_stock_units":      br.FifoStockUnits.Round(0).String(),
+				"fifo_valuation":        br.FifoValuation.StringFixed(2),
+			}
+			if caps["can_view_profit"] {
+				entry["total_cogs"] = br.TotalCogs.StringFixed(2)
+				entry["gross_profit"] = brProfit.StringFixed(2)
+				entry["margin_pct"] = brMargin.StringFixed(2)
+			}
+			branchSalesOut = append(branchSalesOut, entry)
+		}
+	}
+
+	terminalSalesOut := make([]map[string]any, 0)
+	if tmRows, tmErr := a.queries.ListOverviewTerminalPerformance(ctx, db.ListOverviewTerminalPerformanceParams{
+		BusinessID: tc.BusinessID,
+		Column2:    fromPG,
+		Column3:    toPG,
+		Column4:    effectiveBranchID,
+	}); tmErr == nil {
+		totalTermRev := decimal.Zero
+		for _, tm := range tmRows {
+			if tc.CanAccessBranch(tm.BranchID) && tc.CanAccessTerminal(tm.TerminalID) {
+				totalTermRev = totalTermRev.Add(tm.PaidRevenue)
+			}
+		}
+		for _, tm := range tmRows {
+			if !tc.CanAccessBranch(tm.BranchID) || !tc.CanAccessTerminal(tm.TerminalID) {
+				continue
+			}
+			tmProfit, tmMargin := computeProfitAndMargin(tm.PaidRevenue, tm.TotalCogs)
+			tmAOV := computeAverageOrderValue(tm.PaidRevenue, tm.PaidOrders)
+			entry := map[string]any{
+				"terminal_id":          tm.TerminalID,
+				"terminal_code":        tm.TerminalCode,
+				"terminal_name":        tm.TerminalName,
+				"hardware_serial":      tm.HardwareSerial,
+				"is_active":            tm.IsActive,
+				"branch_id":            tm.BranchID,
+				"branch_code":          tm.BranchCode,
+				"branch_name":          tm.BranchName,
+				"shift_status":         tm.ShiftStatus,
+				"active_cashier_name":  tm.ActiveCashierName,
+				"opening_float":        tm.OpeningFloat.StringFixed(2),
+				"paid_orders":          tm.PaidOrders,
+				"refund_void_count":    tm.RefundVoidCount,
+				"units_sold":           tm.UnitsSold.Round(0).IntPart(),
+				"gross_subtotal":       tm.GrossSubtotal.StringFixed(2),
+				"discount_total":       tm.DiscountTotal.StringFixed(2),
+				"tax_total":            tm.TaxTotal.StringFixed(2),
+				"paid_revenue":         tm.PaidRevenue.StringFixed(2),
+				"average_order_value":  tmAOV.StringFixed(2),
+				"revenue_share_pct":    computeSharePct(tm.PaidRevenue, totalTermRev).StringFixed(2),
+				"cash_sales":           tm.CashSales.StringFixed(2),
+				"card_sales":           tm.CardSales.StringFixed(2),
+				"qr_other_sales":       tm.QrOtherSales.StringFixed(2),
+				"held_bill_count":      tm.HeldBillCount,
+				"held_bill_total":      tm.HeldBillTotal.StringFixed(2),
+				"last_invoice_number":  tm.LastInvoiceNumber,
+				"last_sale_at":         tm.LastSaleAt,
+			}
+			if caps["can_view_profit"] {
+				entry["total_cogs"] = tm.TotalCogs.StringFixed(2)
+				entry["gross_profit"] = tmProfit.StringFixed(2)
+				entry["margin_pct"] = tmMargin.StringFixed(2)
+			}
+			terminalSalesOut = append(terminalSalesOut, entry)
+		}
+	}
+
 	resp := map[string]any{
 		"period":            win.Period,
 		"period_label":      win.Label,
@@ -630,6 +798,9 @@ func (a *AnalyticsUsecase) GetOverviewDashboard(
 		"branch_scope":      scopeLabel,
 		"capabilities":      caps,
 		"kpi":               kpiPayload,
+		"company_overview":  companyOverview,
+		"branch_sales":      branchSalesOut,
+		"terminal_sales":    terminalSalesOut,
 		"sales_analytics":   salesAnalytics,
 		"revenue_bars":      revenueBars,
 		"order_sparkline":   orderSparkline,

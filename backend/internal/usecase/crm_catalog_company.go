@@ -133,14 +133,18 @@ type SaveCategoryRequest struct {
 
 // SaveAccessUserRequest validates creating or editing staff/admin logins in Manage Access.
 type SaveAccessUserRequest struct {
-	FullName      string     `json:"full_name"`
-	Email         string     `json:"email"`
-	Password      string     `json:"password,omitempty"`
-	RoleID        uuid.UUID  `json:"role_id"`
-	DesignationID *uuid.UUID `json:"designation_id,omitempty"`
-	BranchID      *uuid.UUID `json:"branch_id,omitempty"`
-	IsActive      bool       `json:"is_active"`
-	SupervisorPIN string     `json:"supervisor_pin,omitempty"`
+	FullName           string      `json:"full_name"`
+	Email              string      `json:"email"`
+	Password           string      `json:"password,omitempty"`
+	RoleID             uuid.UUID   `json:"role_id"`
+	DesignationID      *uuid.UUID  `json:"designation_id,omitempty"`
+	BranchID           *uuid.UUID  `json:"branch_id,omitempty"`
+	AllBranchesAccess  *bool       `json:"all_branches_access,omitempty"`
+	AllowedBranchIDs   []uuid.UUID `json:"allowed_branch_ids,omitempty"`
+	AllowedTerminalIDs []uuid.UUID `json:"allowed_terminal_ids,omitempty"`
+	DefaultTerminalID  *uuid.UUID  `json:"default_terminal_id,omitempty"`
+	IsActive           bool        `json:"is_active"`
+	SupervisorPIN      string      `json:"supervisor_pin,omitempty"`
 }
 
 // SaveDepartmentRequest validates department creation in RBAC & Staff Access.
@@ -812,10 +816,8 @@ func (c *CatalogCompanyUsecase) SaveCategory(ctx context.Context, businessID uui
 	}
 	slug := normalizeCategorySlug(name, req.Slug)
 	seg := strings.TrimSpace(req.GenderSegment)
-	switch seg {
-	case "Men", "Women", "Unisex":
-	default:
-		seg = "Unisex"
+	if seg == "" {
+		seg = "General"
 	}
 	var tg uuid.NullUUID
 	if req.TaxGroupID != nil && *req.TaxGroupID != uuid.Nil {
@@ -929,7 +931,7 @@ func (c *CatalogCompanyUsecase) DeleteBrand(ctx context.Context, businessID, bra
 	})
 }
 
-// ListAccessUsers returns row-wise business user logins, tenant-visible roles, departments, designations, branches, and PIN readiness.
+// ListAccessUsers returns row-wise business user logins, tenant-visible roles, departments, designations, branches, terminals, and PIN readiness.
 func (c *CatalogCompanyUsecase) ListAccessUsers(ctx context.Context, businessID uuid.UUID, includeSuperAdmin bool) (map[string]any, error) {
 	users, err := c.queries.ListBusinessAccessUsers(ctx, businessID)
 	if err != nil {
@@ -946,30 +948,105 @@ func (c *CatalogCompanyUsecase) ListAccessUsers(ctx context.Context, businessID 
 	departments, _ := c.queries.ListDepartmentsForBusiness(ctx, businessID)
 	designations, _ := c.queries.ListDesignationsForBusiness(ctx, businessID)
 	branches, _ := c.queries.ListBranchesForBusiness(ctx, businessID)
+	terminals, _ := c.queries.ListTerminalsWithBranchForBusiness(ctx, db.ListTerminalsWithBranchForBusinessParams{
+		BusinessID: businessID,
+		Column2:    uuid.Nil,
+	})
 	return map[string]any{
 		"users":        users,
 		"roles":        roles,
 		"departments":  departments,
 		"designations": designations,
 		"branches":     branches,
+		"terminals":    terminals,
 	}, nil
 }
 
-// resolveValidatedBranchNullUUID enforces single-branch pinning for non-owner roles and verifies tenant ownership.
-func (c *CatalogCompanyUsecase) resolveValidatedBranchNullUUID(ctx context.Context, businessID uuid.UUID, roleCode string, branchID *uuid.UUID) (uuid.NullUUID, error) {
-	if err := ValidateUserBranchAssignment(roleCode, branchID); err != nil {
-		return uuid.NullUUID{}, err
+// resolveUserBranchAndTerminalScope validates multi-branch & multi-terminal staff assignments for any role.
+func (c *CatalogCompanyUsecase) resolveUserBranchAndTerminalScope(
+	ctx context.Context,
+	businessID uuid.UUID,
+	roleCode string,
+	req SaveAccessUserRequest,
+) (uuid.NullUUID, bool, []uuid.UUID, []uuid.UUID, uuid.NullUUID, error) {
+	allBranches := IsMultiBranchRole(roleCode)
+	if req.AllBranchesAccess != nil && *req.AllBranchesAccess {
+		allBranches = true
 	}
-	if branchID == nil || *branchID == uuid.Nil {
-		return uuid.NullUUID{}, nil
+
+	seenBranches := make(map[uuid.UUID]bool)
+	allowedBranches := make([]uuid.UUID, 0, len(req.AllowedBranchIDs)+1)
+	for _, bid := range req.AllowedBranchIDs {
+		if bid == uuid.Nil || seenBranches[bid] {
+			continue
+		}
+		if _, err := c.queries.GetBranchForBusiness(ctx, db.GetBranchForBusinessParams{
+			BusinessID: businessID,
+			ID:         bid,
+		}); err != nil {
+			return uuid.NullUUID{}, false, nil, nil, uuid.NullUUID{}, errors.New("one or more selected branches do not belong to this business")
+		}
+		seenBranches[bid] = true
+		allowedBranches = append(allowedBranches, bid)
 	}
-	if _, err := c.queries.GetBranchForBusiness(ctx, db.GetBranchForBusinessParams{
-		BusinessID: businessID,
-		ID:         *branchID,
-	}); err != nil {
-		return uuid.NullUUID{}, errors.New("selected branch does not belong to this business")
+
+	var primaryBranch uuid.NullUUID
+	if req.BranchID != nil && *req.BranchID != uuid.Nil {
+		if _, err := c.queries.GetBranchForBusiness(ctx, db.GetBranchForBusinessParams{
+			BusinessID: businessID,
+			ID:         *req.BranchID,
+		}); err != nil {
+			return uuid.NullUUID{}, false, nil, nil, uuid.NullUUID{}, errors.New("selected branch does not belong to this business")
+		}
+		primaryBranch = uuid.NullUUID{UUID: *req.BranchID, Valid: true}
+		if !seenBranches[*req.BranchID] && !allBranches {
+			seenBranches[*req.BranchID] = true
+			allowedBranches = append([]uuid.UUID{*req.BranchID}, allowedBranches...)
+		}
+	} else if len(allowedBranches) > 0 && !allBranches {
+		primaryBranch = uuid.NullUUID{UUID: allowedBranches[0], Valid: true}
 	}
-	return uuid.NullUUID{UUID: *branchID, Valid: true}, nil
+
+	if !allBranches && !primaryBranch.Valid && len(allowedBranches) == 0 {
+		return uuid.NullUUID{}, false, nil, nil, uuid.NullUUID{}, errors.New("at least one branch (or All Branches access) is required")
+	}
+	if allBranches && req.AllBranchesAccess != nil && *req.AllBranchesAccess && req.BranchID == nil {
+		primaryBranch = uuid.NullUUID{}
+	}
+
+	seenTerms := make(map[uuid.UUID]bool)
+	allowedTerms := make([]uuid.UUID, 0, len(req.AllowedTerminalIDs))
+	for _, tid := range req.AllowedTerminalIDs {
+		if tid == uuid.Nil || seenTerms[tid] {
+			continue
+		}
+		tmRow, err := c.queries.GetTerminalForBusiness(ctx, db.GetTerminalForBusinessParams{
+			BusinessID: businessID,
+			ID:         tid,
+		})
+		if err != nil {
+			return uuid.NullUUID{}, false, nil, nil, uuid.NullUUID{}, errors.New("one or more selected terminals do not belong to this business")
+		}
+		if !allBranches && len(allowedBranches) > 0 && !seenBranches[tmRow.BranchID] {
+			continue
+		}
+		seenTerms[tid] = true
+		allowedTerms = append(allowedTerms, tid)
+	}
+
+	var defaultTerm uuid.NullUUID
+	if req.DefaultTerminalID != nil && *req.DefaultTerminalID != uuid.Nil {
+		if _, err := c.queries.GetTerminalForBusiness(ctx, db.GetTerminalForBusinessParams{
+			BusinessID: businessID,
+			ID:         *req.DefaultTerminalID,
+		}); err == nil {
+			defaultTerm = uuid.NullUUID{UUID: *req.DefaultTerminalID, Valid: true}
+		}
+	} else if len(allowedTerms) > 0 {
+		defaultTerm = uuid.NullUUID{UUID: allowedTerms[0], Valid: true}
+	}
+
+	return primaryBranch, allBranches, allowedBranches, allowedTerms, defaultTerm, nil
 }
 
 // CreateAccessUser registers or links a user account with an assigned role/designation in this business.
@@ -994,7 +1071,7 @@ func (c *CatalogCompanyUsecase) CreateAccessUser(ctx context.Context, businessID
 		return nil, errors.New("only platform SuperAdmins may assign the SuperAdmin role")
 	}
 
-	brID, brErr := c.resolveValidatedBranchNullUUID(ctx, businessID, roleRow.Code, req.BranchID)
+	brID, allBranches, allowedBranches, allowedTerms, defaultTerm, brErr := c.resolveUserBranchAndTerminalScope(ctx, businessID, roleRow.Code, req)
 	if brErr != nil {
 		return nil, brErr
 	}
@@ -1050,13 +1127,17 @@ func (c *CatalogCompanyUsecase) CreateAccessUser(ctx context.Context, businessID
 	}
 
 	ubr, err := c.queries.InsertUserBusinessRole(ctx, db.InsertUserBusinessRoleParams{
-		UserID:            userID,
-		BusinessID:        businessID,
-		BranchID:          brID,
-		RoleID:            req.RoleID,
-		DesignationID:     desigID,
-		SupervisorPinHash: pinHash,
-		IsActive:          true,
+		UserID:             userID,
+		BusinessID:         businessID,
+		BranchID:           brID,
+		RoleID:             req.RoleID,
+		DesignationID:      desigID,
+		SupervisorPinHash:  pinHash,
+		IsActive:           true,
+		AllBranchesAccess:  allBranches,
+		AllowedBranchIds:   allowedBranches,
+		AllowedTerminalIds: allowedTerms,
+		DefaultTerminalID:  defaultTerm,
 	})
 	if err != nil {
 		return nil, err
@@ -1067,7 +1148,7 @@ func (c *CatalogCompanyUsecase) CreateAccessUser(ctx context.Context, businessID
 	return map[string]any{"assignment": ubr, "email": email, "full_name": fullName, "role_code": roleRow.Code}, nil
 }
 
-// UpdateAccessUser updates user full name, role, designation, branch scope, active status, and optional 6-digit PIN.
+// UpdateAccessUser updates user full name, role, designation, multi-branch/terminal scope, active status, and optional 6-digit PIN.
 func (c *CatalogCompanyUsecase) UpdateAccessUser(ctx context.Context, businessID, ubrID, userID uuid.UUID, includeSuperAdmin bool, req SaveAccessUserRequest) (map[string]any, error) {
 	if req.RoleID == uuid.Nil {
 		return nil, errors.New("role_id is required")
@@ -1092,7 +1173,25 @@ func (c *CatalogCompanyUsecase) UpdateAccessUser(ctx context.Context, businessID
 		return nil, errors.New("only platform SuperAdmins may assign the SuperAdmin role")
 	}
 
-	brID, brErr := c.resolveValidatedBranchNullUUID(ctx, businessID, roleRow.Code, req.BranchID)
+	// Preserve existing multi-branch/terminal assignments when inline row updates only toggle role, designation, or active flag.
+	if req.AllBranchesAccess == nil && len(req.AllowedBranchIDs) == 0 && req.BranchID == nil {
+		existingAll := currentUBR.AllBranchesAccess
+		req.AllBranchesAccess = &existingAll
+		req.AllowedBranchIDs = currentUBR.AllowedBranchIds
+		if currentUBR.BranchID.Valid {
+			bCopy := currentUBR.BranchID.UUID
+			req.BranchID = &bCopy
+		}
+	}
+	if len(req.AllowedTerminalIDs) == 0 && req.DefaultTerminalID == nil && len(currentUBR.AllowedTerminalIds) > 0 {
+		req.AllowedTerminalIDs = currentUBR.AllowedTerminalIds
+		if currentUBR.DefaultTerminalID.Valid {
+			tCopy := currentUBR.DefaultTerminalID.UUID
+			req.DefaultTerminalID = &tCopy
+		}
+	}
+
+	brID, allBranches, allowedBranches, allowedTerms, defaultTerm, brErr := c.resolveUserBranchAndTerminalScope(ctx, businessID, roleRow.Code, req)
 	if brErr != nil {
 		return nil, brErr
 	}
@@ -1112,12 +1211,16 @@ func (c *CatalogCompanyUsecase) UpdateAccessUser(ctx context.Context, businessID
 		desigID = uuid.NullUUID{UUID: *req.DesignationID, Valid: true}
 	}
 	updated, err := c.queries.UpdateUserBusinessRoleAssignment(ctx, db.UpdateUserBusinessRoleAssignmentParams{
-		BusinessID:    businessID,
-		ID:            ubrID,
-		RoleID:        req.RoleID,
-		DesignationID: desigID,
-		BranchID:      brID,
-		IsActive:      req.IsActive,
+		BusinessID:         businessID,
+		ID:                 ubrID,
+		RoleID:             req.RoleID,
+		DesignationID:      desigID,
+		BranchID:           brID,
+		IsActive:           req.IsActive,
+		AllBranchesAccess:  allBranches,
+		AllowedBranchIds:   allowedBranches,
+		AllowedTerminalIds: allowedTerms,
+		DefaultTerminalID:  defaultTerm,
 	})
 	if err != nil {
 		return nil, err

@@ -552,6 +552,7 @@ WITH inv_agg AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 ),
 item_agg AS (
     SELECT
@@ -564,6 +565,7 @@ item_agg AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 ),
 held_agg AS (
     SELECT
@@ -573,6 +575,7 @@ held_agg AS (
     WHERE sb.business_id = $1
       AND sb.status = 'HELD'
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR sb.branch_id = $4::UUID)
+      AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR sb.terminal_id = $6::UUID)
 )
 SELECT
     inv_agg.paid_order_count,
@@ -606,6 +609,7 @@ WITH inv_buckets AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($7::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $7::UUID)
     GROUP BY 1
 ),
 item_buckets AS (
@@ -625,6 +629,7 @@ item_buckets AS (
       AND si.created_at <= $3::TIMESTAMPTZ
       AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
       AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+      AND ($7::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $7::UUID)
     GROUP BY 1
 )
 SELECT
@@ -686,6 +691,8 @@ SELECT
     si.order_channel,
     si.created_at,
     br.name AS branch_name,
+    COALESCE(tm.code, '')::TEXT AS terminal_code,
+    COALESCE(tm.name, '')::TEXT AS terminal_name,
     COALESCE(u.full_name, 'Cashier')::TEXT AS cashier_name,
     COALESCE(c.name, 'Walk-in Guest')::TEXT AS customer_name,
     COALESCE(NULLIF(c.avatar_url, ''), '')::TEXT AS customer_avatar,
@@ -719,6 +726,7 @@ SELECT
     ), '[]'::jsonb)::JSONB AS item_images_json
 FROM sales_invoices si
 JOIN branches br ON br.id = si.branch_id
+LEFT JOIN terminals tm ON tm.id = si.terminal_id
 LEFT JOIN customers c ON c.id = si.customer_id
 LEFT JOIN users u ON u.id = si.cashier_user_id
 WHERE si.business_id = $1
@@ -726,6 +734,7 @@ WHERE si.business_id = $1
   AND si.created_at <= $3::TIMESTAMPTZ
   AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
   AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+  AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 ORDER BY si.created_at DESC
 LIMIT 20;
 
@@ -915,6 +924,7 @@ WHERE si.business_id = $1
   AND si.created_at <= $3::TIMESTAMPTZ
   AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
   AND ($5::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.cashier_user_id = $5::UUID)
+  AND ($6::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.terminal_id = $6::UUID)
 GROUP BY ip.payment_method
 ORDER BY total_collected DESC, ip.payment_method ASC;
 
@@ -976,5 +986,256 @@ WHERE si.business_id = $1
 GROUP BY c.id, c.name, c.gender_segment
 ORDER BY revenue DESC, units_sold DESC, c.name ASC
 LIMIT 8;
+
+-- name: GetOverviewCompanySummary :one
+SELECT
+    b.id AS business_id,
+    b.name AS business_name,
+    COALESCE(NULLIF(b.trade_name, ''), b.name)::TEXT AS trade_name,
+    b.legal_name,
+    b.tax_registration_no,
+    b.base_currency,
+    COALESCE(NULLIF(b.industry_profile, ''), 'retail')::TEXT AS industry_profile,
+    COALESCE(NULLIF(b.default_language, ''), 'en')::TEXT AS default_language,
+    (SELECT COUNT(*)::INT FROM branches br WHERE br.business_id = b.id) AS total_branches,
+    (SELECT COUNT(*)::INT FROM branches br WHERE br.business_id = b.id AND br.is_active = TRUE) AS active_branches,
+    (SELECT COUNT(*)::INT FROM warehouses wh WHERE wh.business_id = b.id AND wh.is_active = TRUE) AS total_warehouses,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = b.id) AS total_terminals,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = b.id AND tm.is_active = TRUE) AS active_terminals,
+    (SELECT COUNT(DISTINCT ps.terminal_id)::INT FROM pos_shifts ps WHERE ps.business_id = b.id AND ps.status = 'OPEN') AS open_shift_terminals,
+    (SELECT COUNT(*)::INT FROM user_business_roles ubr WHERE ubr.business_id = b.id) AS total_staff,
+    (SELECT COUNT(*)::INT FROM user_business_roles ubr WHERE ubr.business_id = b.id AND ubr.is_active = TRUE) AS active_staff,
+    (SELECT COUNT(*)::INT FROM brands bd WHERE bd.business_id = b.id AND bd.is_active = TRUE) AS total_brands,
+    (SELECT COUNT(*)::INT FROM categories ct WHERE ct.business_id = b.id) AS total_categories,
+    (SELECT COUNT(*)::INT FROM products pr WHERE pr.business_id = b.id AND pr.is_active = TRUE AND pr.is_archived = FALSE) AS active_skus,
+    (SELECT COUNT(*)::INT FROM customers cu WHERE cu.business_id = b.id) AS total_customers,
+    (SELECT COUNT(*)::INT FROM suppliers sp WHERE sp.business_id = b.id) AS total_suppliers,
+    COALESCE((
+        SELECT SUM(ib.remaining_qty)
+        FROM inventory_batches ib
+        WHERE ib.business_id = b.id AND ib.remaining_qty > 0
+    ), 0)::NUMERIC(19,4) AS total_stock_units,
+    COALESCE((
+        SELECT SUM(ib.remaining_qty * ib.unit_cost)
+        FROM inventory_batches ib
+        WHERE ib.business_id = b.id AND ib.remaining_qty > 0
+    ), 0)::NUMERIC(19,4) AS total_fifo_valuation
+FROM businesses b
+WHERE b.id = $1
+LIMIT 1;
+
+-- name: ListOverviewBranchPerformance :many
+WITH br_sales AS (
+    SELECT
+        si.branch_id,
+        COUNT(*) FILTER (WHERE si.status = 'PAID')::INT AS paid_orders,
+        COUNT(*) FILTER (WHERE si.status IN ('VOID', 'REFUND', 'REFUNDED'))::INT AS refund_void_count,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS discount_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS tax_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs
+    FROM sales_invoices si
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.branch_id
+),
+br_items AS (
+    SELECT
+        si.branch_id,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
+    FROM sales_invoice_items sii
+    JOIN sales_invoices si ON si.id = sii.invoice_id
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.branch_id
+),
+br_stock AS (
+    SELECT
+        ib.branch_id,
+        COALESCE(SUM(ib.remaining_qty), 0)::NUMERIC(19,4) AS fifo_stock_units,
+        COALESCE(SUM(ib.remaining_qty * ib.unit_cost), 0)::NUMERIC(19,4) AS fifo_valuation
+    FROM inventory_batches ib
+    WHERE ib.business_id = $1
+      AND ib.remaining_qty > 0
+    GROUP BY ib.branch_id
+),
+br_held AS (
+    SELECT
+        sb.branch_id,
+        COUNT(*)::INT AS held_bill_count,
+        COALESCE(SUM(sb.grand_total), 0)::NUMERIC(19,4) AS held_bill_total
+    FROM suspended_bills sb
+    WHERE sb.business_id = $1
+      AND sb.status = 'HELD'
+    GROUP BY sb.branch_id
+)
+SELECT
+    br.id AS branch_id,
+    br.code AS branch_code,
+    br.name AS branch_name,
+    br.city,
+    br.country_code,
+    br.country_name,
+    br.address,
+    br.is_warehouse,
+    br.is_active,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = br.business_id AND tm.branch_id = br.id) AS terminal_count,
+    (SELECT COUNT(*)::INT FROM terminals tm WHERE tm.business_id = br.business_id AND tm.branch_id = br.id AND tm.is_active = TRUE) AS active_terminal_count,
+    (SELECT COUNT(DISTINCT ps.terminal_id)::INT FROM pos_shifts ps WHERE ps.business_id = br.business_id AND ps.branch_id = br.id AND ps.status = 'OPEN') AS open_shift_count,
+    (
+        SELECT COUNT(*)::INT
+        FROM user_business_roles ubr
+        WHERE ubr.business_id = br.business_id
+          AND ubr.is_active = TRUE
+          AND (
+              ubr.all_branches_access = TRUE
+              OR ubr.branch_id IS NULL
+              OR ubr.branch_id = br.id
+              OR br.id = ANY(ubr.allowed_branch_ids)
+          )
+    ) AS staff_count,
+    COALESCE(bs.paid_orders, 0)::INT AS paid_orders,
+    COALESCE(bs.refund_void_count, 0)::INT AS refund_void_count,
+    COALESCE(bi.units_sold, 0)::NUMERIC(19,4) AS units_sold,
+    COALESCE(bs.gross_subtotal, 0)::NUMERIC(19,4) AS gross_subtotal,
+    COALESCE(bs.discount_total, 0)::NUMERIC(19,4) AS discount_total,
+    COALESCE(bs.tax_total, 0)::NUMERIC(19,4) AS tax_total,
+    COALESCE(bs.paid_revenue, 0)::NUMERIC(19,4) AS paid_revenue,
+    COALESCE(bs.total_cogs, 0)::NUMERIC(19,4) AS total_cogs,
+    COALESCE(bh.held_bill_count, 0)::INT AS held_bill_count,
+    COALESCE(bh.held_bill_total, 0)::NUMERIC(19,4) AS held_bill_total,
+    COALESCE(bst.fifo_stock_units, 0)::NUMERIC(19,4) AS fifo_stock_units,
+    COALESCE(bst.fifo_valuation, 0)::NUMERIC(19,4) AS fifo_valuation
+FROM branches br
+LEFT JOIN br_sales bs ON bs.branch_id = br.id
+LEFT JOIN br_items bi ON bi.branch_id = br.id
+LEFT JOIN br_stock bst ON bst.branch_id = br.id
+LEFT JOIN br_held bh ON bh.branch_id = br.id
+WHERE br.business_id = $1
+ORDER BY COALESCE(bs.paid_revenue, 0) DESC, br.code ASC;
+
+-- name: ListOverviewTerminalPerformance :many
+WITH tm_sales AS (
+    SELECT
+        si.terminal_id,
+        COUNT(*) FILTER (WHERE si.status = 'PAID')::INT AS paid_orders,
+        COUNT(*) FILTER (WHERE si.status IN ('VOID', 'REFUND', 'REFUNDED'))::INT AS refund_void_count,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS discount_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS tax_total,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs
+    FROM sales_invoices si
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.terminal_id
+),
+tm_items AS (
+    SELECT
+        si.terminal_id,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
+    FROM sales_invoice_items sii
+    JOIN sales_invoices si ON si.id = sii.invoice_id
+    WHERE si.business_id = $1
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.terminal_id
+),
+tm_payments AS (
+    SELECT
+        si.terminal_id,
+        COALESCE(SUM(CASE WHEN UPPER(ip.payment_method) = 'CASH' THEN ip.amount ELSE 0 END), 0)::NUMERIC(19,4) AS cash_sales,
+        COALESCE(SUM(CASE WHEN UPPER(ip.payment_method) = 'CARD' THEN ip.amount ELSE 0 END), 0)::NUMERIC(19,4) AS card_sales,
+        COALESCE(SUM(CASE WHEN UPPER(ip.payment_method) NOT IN ('CASH', 'CARD') THEN ip.amount ELSE 0 END), 0)::NUMERIC(19,4) AS qr_other_sales
+    FROM invoice_payments ip
+    JOIN sales_invoices si ON si.id = ip.invoice_id
+    WHERE si.business_id = $1
+      AND si.status = 'PAID'
+      AND si.created_at >= $2::TIMESTAMPTZ
+      AND si.created_at <= $3::TIMESTAMPTZ
+    GROUP BY si.terminal_id
+),
+tm_held AS (
+    SELECT
+        sb.terminal_id,
+        COUNT(*)::INT AS held_bill_count,
+        COALESCE(SUM(sb.grand_total), 0)::NUMERIC(19,4) AS held_bill_total
+    FROM suspended_bills sb
+    WHERE sb.business_id = $1
+      AND sb.status = 'HELD'
+    GROUP BY sb.terminal_id
+)
+SELECT
+    tm.id AS terminal_id,
+    tm.code AS terminal_code,
+    tm.name AS terminal_name,
+    tm.hardware_serial,
+    tm.is_active,
+    br.id AS branch_id,
+    br.code AS branch_code,
+    br.name AS branch_name,
+    COALESCE((
+        SELECT ps.status
+        FROM pos_shifts ps
+        WHERE ps.business_id = tm.business_id AND ps.terminal_id = tm.id
+        ORDER BY CASE WHEN ps.status = 'OPEN' THEN 0 ELSE 1 END, ps.opened_at DESC
+        LIMIT 1
+    ), 'CLOSED')::TEXT AS shift_status,
+    COALESCE((
+        SELECT u.full_name
+        FROM pos_shifts ps
+        JOIN users u ON u.id = ps.cashier_user_id
+        WHERE ps.business_id = tm.business_id AND ps.terminal_id = tm.id
+        ORDER BY CASE WHEN ps.status = 'OPEN' THEN 0 ELSE 1 END, ps.opened_at DESC
+        LIMIT 1
+    ), 'Unassigned')::TEXT AS active_cashier_name,
+    COALESCE((
+        SELECT ps.opening_float
+        FROM pos_shifts ps
+        WHERE ps.business_id = tm.business_id AND ps.terminal_id = tm.id
+        ORDER BY CASE WHEN ps.status = 'OPEN' THEN 0 ELSE 1 END, ps.opened_at DESC
+        LIMIT 1
+    ), 0)::NUMERIC(19,4) AS opening_float,
+    COALESCE(ts.paid_orders, 0)::INT AS paid_orders,
+    COALESCE(ts.refund_void_count, 0)::INT AS refund_void_count,
+    COALESCE(ti.units_sold, 0)::NUMERIC(19,4) AS units_sold,
+    COALESCE(ts.gross_subtotal, 0)::NUMERIC(19,4) AS gross_subtotal,
+    COALESCE(ts.discount_total, 0)::NUMERIC(19,4) AS discount_total,
+    COALESCE(ts.tax_total, 0)::NUMERIC(19,4) AS tax_total,
+    COALESCE(ts.paid_revenue, 0)::NUMERIC(19,4) AS paid_revenue,
+    COALESCE(ts.total_cogs, 0)::NUMERIC(19,4) AS total_cogs,
+    COALESCE(tp.cash_sales, 0)::NUMERIC(19,4) AS cash_sales,
+    COALESCE(tp.card_sales, 0)::NUMERIC(19,4) AS card_sales,
+    COALESCE(tp.qr_other_sales, 0)::NUMERIC(19,4) AS qr_other_sales,
+    COALESCE(th.held_bill_count, 0)::INT AS held_bill_count,
+    COALESCE(th.held_bill_total, 0)::NUMERIC(19,4) AS held_bill_total,
+    COALESCE((
+        SELECT si2.invoice_number
+        FROM sales_invoices si2
+        WHERE si2.business_id = tm.business_id AND si2.terminal_id = tm.id AND si2.status = 'PAID'
+        ORDER BY si2.created_at DESC
+        LIMIT 1
+    ), '')::TEXT AS last_invoice_number,
+    COALESCE((
+        SELECT TO_CHAR(si2.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+        FROM sales_invoices si2
+        WHERE si2.business_id = tm.business_id AND si2.terminal_id = tm.id AND si2.status = 'PAID'
+        ORDER BY si2.created_at DESC
+        LIMIT 1
+    ), '')::TEXT AS last_sale_at
+FROM terminals tm
+JOIN branches br ON br.id = tm.branch_id
+LEFT JOIN tm_sales ts ON ts.terminal_id = tm.id
+LEFT JOIN tm_items ti ON ti.terminal_id = tm.id
+LEFT JOIN tm_payments tp ON tp.terminal_id = tm.id
+LEFT JOIN tm_held th ON th.terminal_id = tm.id
+WHERE tm.business_id = $1
+  AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR tm.branch_id = $4::UUID)
+ORDER BY COALESCE(ts.paid_revenue, 0) DESC, br.code ASC, tm.code ASC;
+
 
 

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Briefcase,
+  Check,
   KeyRound,
   Pencil,
   Plus,
@@ -68,8 +69,12 @@ export function StaffManagementSheet({
   const [roleId, setRoleId] = React.useState('');
   const [designationId, setDesignationId] = React.useState('NONE');
   const [branchId, setBranchId] = React.useState('ALL');
+  const [allBranches, setAllBranches] = React.useState(false);
+  const [allowedBranchIds, setAllowedBranchIds] = React.useState<string[]>([]);
+  const [allowedTerminalIds, setAllowedTerminalIds] = React.useState<string[]>([]);
   const [supervisorPin, setSupervisorPin] = React.useState('');
   const [isActive, setIsActive] = React.useState(true);
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({});
   const [savingUser, setSavingUser] = React.useState(false);
 
   const { data: accessData, isLoading } = useQuery({
@@ -79,6 +84,7 @@ export function StaffManagementSheet({
   });
 
   const availableBranches = accessData?.branches || branches;
+  const availableTerminals = accessData?.terminals || [];
   const defaultConcreteBranchId = availableBranches[0]?.id || context?.branch_id || '';
   const selectedRoleCode =
     (accessData?.roles || []).find((r) => r.id === roleId)?.code || '';
@@ -88,7 +94,11 @@ export function StaffManagementSheet({
     setRoleId(nextRoleId);
     const nextCode =
       (accessData?.roles || []).find((r) => r.id === nextRoleId)?.code || '';
-    if (!isMultiBranchRole(nextCode) && (!branchId || branchId === 'ALL')) {
+    if (isMultiBranchRole(nextCode)) {
+      setAllBranches(true);
+      setBranchId('ALL');
+    } else if (!allBranches && allowedBranchIds.length === 0 && defaultConcreteBranchId) {
+      setAllowedBranchIds([defaultConcreteBranchId]);
       setBranchId(defaultConcreteBranchId);
     }
   };
@@ -100,19 +110,24 @@ export function StaffManagementSheet({
         const defaultRole =
           accessData?.roles.find((r) => r.code === 'Cashier') ||
           accessData?.roles[0];
+        const isOwner = isMultiBranchRole(defaultRole?.code);
         setEditingUser(null);
         setFullName('');
         setEmail('');
         setPassword('');
         setRoleId(defaultRole?.id || '');
         setDesignationId(accessData?.designations[0]?.id || 'NONE');
+        setAllBranches(isOwner);
+        setAllowedBranchIds(defaultConcreteBranchId ? [defaultConcreteBranchId] : []);
+        setAllowedTerminalIds([]);
         setBranchId(
-          isMultiBranchRole(defaultRole?.code)
+          isOwner
             ? 'ALL'
             : defaultConcreteBranchId || 'ALL'
         );
         setSupervisorPin('');
         setIsActive(true);
+        setFieldErrors({});
       }
     }
   }, [open, defaultView, accessData?.roles, accessData?.designations, defaultConcreteBranchId]);
@@ -134,19 +149,24 @@ export function StaffManagementSheet({
     const defaultRole =
       accessData?.roles.find((r) => r.code === 'Cashier') ||
       accessData?.roles[0];
+    const isOwner = isMultiBranchRole(defaultRole?.code);
     setEditingUser(null);
     setFullName('');
     setEmail('');
     setPassword('');
     setRoleId(defaultRole?.id || '');
     setDesignationId(accessData?.designations[0]?.id || 'NONE');
+    setAllBranches(isOwner);
+    setAllowedBranchIds(defaultConcreteBranchId ? [defaultConcreteBranchId] : []);
+    setAllowedTerminalIds([]);
     setBranchId(
-      isMultiBranchRole(defaultRole?.code)
+      isOwner
         ? 'ALL'
         : defaultConcreteBranchId
     );
     setSupervisorPin('');
     setIsActive(true);
+    setFieldErrors({});
     setView('user_form');
   };
 
@@ -157,46 +177,75 @@ export function StaffManagementSheet({
     setPassword('');
     setRoleId(row.role_id);
     setDesignationId(row.designation_id || 'NONE');
+    const rowAll = Boolean(row.all_branches_access || isMultiBranchRole(row.role_code));
+    const existingBranches =
+      row.allowed_branch_ids && row.allowed_branch_ids.length > 0
+        ? row.allowed_branch_ids
+        : row.branch_id
+        ? [row.branch_id]
+        : defaultConcreteBranchId
+        ? [defaultConcreteBranchId]
+        : [];
+    setAllBranches(rowAll);
+    setAllowedBranchIds(existingBranches);
+    setAllowedTerminalIds(row.allowed_terminal_ids || []);
     setBranchId(
       row.branch_id ||
-        (isMultiBranchRole(row.role_code) ? 'ALL' : defaultConcreteBranchId)
+        (rowAll ? 'ALL' : existingBranches[0] || defaultConcreteBranchId)
     );
     setSupervisorPin('');
     setIsActive(row.is_active);
+    setFieldErrors({});
     setView('user_form');
   };
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errs: Record<string, string> = {};
     if (!fullName.trim()) {
-      toast.error('Full name is required');
-      return;
+      errs.fullName = 'Full name is required';
     }
     if (!editingUser && (!email.trim() || !email.includes('@'))) {
-      toast.error('Valid work email is required');
-      return;
+      errs.email = 'Valid work email is required';
     }
     if (supervisorPin.trim() && supervisorPin.trim().length !== 6) {
-      toast.error('Supervisor PIN must be exactly 6 digits');
-      return;
+      errs.pin = 'Supervisor PIN must be exactly 6 digits';
     }
     if (!roleId) {
-      toast.error('Please select a role');
+      errs.role = 'Please select a role';
+    }
+    if (!allBranches && allowedBranchIds.length === 0 && (!branchId || branchId === 'ALL')) {
+      errs.branch = 'Select at least one branch or enable All Branches';
+    }
+    if (Object.keys(errs).length > 0) {
+      setFieldErrors(errs);
+      toast.error(Object.values(errs)[0]);
       return;
     }
-    if (!selectedRoleSupportsAll && (!branchId || branchId === 'ALL')) {
-      toast.error('Branch assignment is required for this role (only Owner / SuperAdmin access multiple branches)');
-      return;
-    }
+    setFieldErrors({});
 
     setSavingUser(true);
     try {
+      const effectiveAllowedBranches = allBranches
+        ? []
+        : allowedBranchIds.length > 0
+        ? allowedBranchIds
+        : branchId && branchId !== 'ALL'
+        ? [branchId]
+        : [];
+      const primaryBranchId =
+        branchId && branchId !== 'ALL'
+          ? branchId
+          : effectiveAllowedBranches[0] || null;
       const payload: Record<string, unknown> = {
         full_name: fullName.trim(),
         email: email.trim().toLowerCase(),
         role_id: roleId,
         designation_id: designationId !== 'NONE' ? designationId : null,
-        branch_id: branchId !== 'ALL' ? branchId : null,
+        branch_id: primaryBranchId,
+        all_branches_access: allBranches,
+        allowed_branch_ids: effectiveAllowedBranches,
+        allowed_terminal_ids: allowedTerminalIds,
         is_active: isActive,
       };
       if (supervisorPin.trim()) payload.supervisor_pin = supervisorPin.trim();
@@ -378,29 +427,39 @@ export function StaffManagementSheet({
           )}
 
           {view === 'user_form' && (
-            <form onSubmit={handleSaveUser} className="space-y-3" data-testid="pos-staff-user-form">
+            <form onSubmit={handleSaveUser} noValidate className="space-y-3" data-testid="pos-staff-user-form">
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-ink">Full Name</label>
+                  <label className="text-[11px] font-semibold text-ink">Full Name *</label>
                   <Input
                     value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
+                    onChange={(e) => {
+                      setFullName(e.target.value);
+                      if (fieldErrors.fullName) setFieldErrors((prev) => ({ ...prev, fullName: '' }));
+                    }}
                     placeholder="e.g., Nimali Perera"
-                    required
                     data-testid="pos-staff-fullname-input"
                   />
+                  {fieldErrors.fullName && (
+                    <p className="text-[11px] font-medium text-red-500">{fieldErrors.fullName}</p>
+                  )}
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[11px] font-semibold text-ink">Work Email</label>
+                  <label className="text-[11px] font-semibold text-ink">Work Email *</label>
                   <Input
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: '' }));
+                    }}
                     disabled={Boolean(editingUser)}
                     placeholder="cashier@company.com"
-                    required
                     data-testid="pos-staff-email-input"
                   />
+                  {fieldErrors.email && (
+                    <p className="text-[11px] font-medium text-red-500">{fieldErrors.email}</p>
+                  )}
                 </div>
               </div>
 
@@ -472,26 +531,125 @@ export function StaffManagementSheet({
                 </Select>
               </div>
 
+              {/* Multi-Branch & Multi-Terminal Assignment */}
+              <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/50 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-ink">Branch Access (1, Multiple, or All)</span>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-ink cursor-pointer">
+                    <Switch
+                      checked={allBranches}
+                      disabled={selectedRoleSupportsAll}
+                      onCheckedChange={(checked) => {
+                        setAllBranches(checked);
+                        if (checked) {
+                          setBranchId('ALL');
+                          setFieldErrors((prev) => ({ ...prev, branch: '' }));
+                        } else if (allowedBranchIds.length === 0 && defaultConcreteBranchId) {
+                          setAllowedBranchIds([defaultConcreteBranchId]);
+                          setBranchId(defaultConcreteBranchId);
+                        }
+                      }}
+                    />
+                    <span>All Branches</span>
+                  </label>
+                </div>
+
+                {!allBranches && (
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {availableBranches.map((b) => {
+                      const checked = allowedBranchIds.includes(b.id);
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => {
+                            setAllowedBranchIds((prev) => {
+                              const next = prev.includes(b.id)
+                                ? prev.filter((id) => id !== b.id)
+                                : [...prev, b.id];
+                              if (next.length > 0 && (!branchId || branchId === 'ALL' || !next.includes(branchId))) {
+                                setBranchId(next[0]);
+                              }
+                              return next;
+                            });
+                            setFieldErrors((prev) => ({ ...prev, branch: '' }));
+                          }}
+                          className={`flex items-center justify-between gap-2 rounded-[var(--theme-radius-control)] border px-2 py-1 text-left text-[11px] transition cursor-pointer ${
+                            checked
+                              ? 'border-accent bg-accent-soft/30 font-bold text-ink'
+                              : 'border-border-theme bg-surface text-ink-muted'
+                          }`}
+                        >
+                          <span className="truncate">{b.code} • {b.name}</span>
+                          {checked && <Check className="h-3 w-3 text-accent shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {fieldErrors.branch && (
+                  <p className="text-[11px] font-medium text-red-500">{fieldErrors.branch}</p>
+                )}
+
+                {availableTerminals.length > 0 && (
+                  <div className="pt-1 space-y-1">
+                    <span className="text-[10.5px] font-semibold text-ink-muted">
+                      POS Terminals (optional filter — leave unchecked for all branch registers)
+                    </span>
+                    <div className="grid grid-cols-2 gap-1">
+                      {availableTerminals
+                        .filter((tm) => allBranches || allowedBranchIds.includes(tm.branch_id))
+                        .map((tm) => {
+                          const checked = allowedTerminalIds.includes(tm.id);
+                          return (
+                            <button
+                              key={tm.id}
+                              type="button"
+                              onClick={() =>
+                                setAllowedTerminalIds((prev) =>
+                                  prev.includes(tm.id)
+                                    ? prev.filter((id) => id !== tm.id)
+                                    : [...prev, tm.id]
+                                )
+                              }
+                              className={`flex items-center justify-between gap-1 rounded-[var(--theme-radius-control)] border px-2 py-1 text-left font-mono text-[10.5px] transition cursor-pointer ${
+                                checked
+                                  ? 'border-accent bg-accent-soft/30 font-bold text-ink'
+                                  : 'border-border-theme bg-surface text-ink-muted'
+                              }`}
+                            >
+                              <span className="truncate">{tm.code}</span>
+                              {checked && <Check className="h-3 w-3 text-accent shrink-0" />}
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 <div className="space-y-1">
                   <label className="text-[11px] font-semibold text-ink">
-                    Branch Assignment {!selectedRoleSupportsAll ? '*' : ''}
+                    Default Branch
                   </label>
                   <Select value={branchId} onValueChange={setBranchId}>
                     <SelectTrigger data-testid="pos-staff-branch-select">
                       <SelectValue
-                        placeholder={selectedRoleSupportsAll ? 'All Branches' : 'Select Branch'}
+                        placeholder={allBranches ? 'All Branches' : 'Select Branch'}
                       />
                     </SelectTrigger>
                     <SelectContent>
-                      {selectedRoleSupportsAll && (
+                      {allBranches && (
                         <SelectItem value="ALL">All Branches</SelectItem>
                       )}
-                      {availableBranches.map((b) => (
-                        <SelectItem key={b.id} value={b.id}>
-                          {b.name}
-                        </SelectItem>
-                      ))}
+                      {availableBranches
+                        .filter((b) => allBranches || allowedBranchIds.includes(b.id))
+                        .map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.name}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -504,11 +662,17 @@ export function StaffManagementSheet({
                     value={supervisorPin}
                     maxLength={6}
                     inputMode="numeric"
-                    onChange={(e) => setSupervisorPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onChange={(e) => {
+                      setSupervisorPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                      if (fieldErrors.pin) setFieldErrors((prev) => ({ ...prev, pin: '' }));
+                    }}
                     placeholder="Enter 6-digit PIN"
                     className="font-mono tabular-nums"
                     data-testid="pos-staff-pin-input"
                   />
+                  {fieldErrors.pin && (
+                    <p className="text-[11px] font-medium text-red-500">{fieldErrors.pin}</p>
+                  )}
                 </div>
               </div>
 

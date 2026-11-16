@@ -331,7 +331,11 @@ SELECT
     COALESCE(d.name, r.name)::TEXT AS designation_name,
     COALESCE(d.max_pos_discount_pct, 100.00)::NUMERIC(5,2) AS max_pos_discount_pct,
     ubr.is_active,
-    (ubr.supervisor_pin_hash <> '')::BOOLEAN AS has_pin
+    (ubr.supervisor_pin_hash <> '')::BOOLEAN AS has_pin,
+    ubr.all_branches_access,
+    ubr.allowed_branch_ids,
+    ubr.allowed_terminal_ids,
+    ubr.default_terminal_id
 FROM user_business_roles ubr
 JOIN users u ON u.id = ubr.user_id
 JOIN roles r ON r.id = ubr.role_id
@@ -347,7 +351,8 @@ WHERE LOWER(email) = LOWER($1)
 LIMIT 1;
 
 -- name: GetUserBusinessRoleByID :one
-SELECT id, user_id, business_id, branch_id, role_id, designation_id, is_active
+SELECT id, user_id, business_id, branch_id, role_id, designation_id, is_active,
+       all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id
 FROM user_business_roles
 WHERE id = $1 AND business_id = $2
 LIMIT 1;
@@ -364,9 +369,13 @@ VALUES ($1, $2, $3, $4, TRUE)
 RETURNING id, email, full_name, avatar_url, is_active, created_at;
 
 -- name: InsertUserBusinessRole :one
-INSERT INTO user_business_roles (user_id, business_id, branch_id, role_id, designation_id, supervisor_pin_hash, is_active)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, business_id, role_id, designation_id, is_active;
+INSERT INTO user_business_roles (
+    user_id, business_id, branch_id, role_id, designation_id, supervisor_pin_hash, is_active,
+    all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, user_id, business_id, branch_id, role_id, designation_id, is_active,
+          all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id;
 
 -- name: UpdateAccessUserDetails :exec
 UPDATE users
@@ -379,9 +388,14 @@ SET
     role_id = $3,
     designation_id = $4,
     branch_id = $5,
-    is_active = $6
+    is_active = $6,
+    all_branches_access = $7,
+    allowed_branch_ids = $8,
+    allowed_terminal_ids = $9,
+    default_terminal_id = $10
 WHERE business_id = $1 AND id = $2
-RETURNING id, user_id, business_id, role_id, designation_id, branch_id, is_active;
+RETURNING id, user_id, business_id, role_id, designation_id, branch_id, is_active,
+          all_branches_access, allowed_branch_ids, allowed_terminal_ids, default_terminal_id;
 
 -- name: UpdateUserBusinessRolePIN :exec
 UPDATE user_business_roles

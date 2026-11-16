@@ -56,7 +56,7 @@ import {
 } from '@/components/ui/command';
 import { Badge } from '@/components/ui/badge';
 import { formatDisplayLabel } from '@/lib/formatLabel';
-import { isMultiBranchRole } from '@/lib/branchAccess';
+import { hasMultiBranchAccess, isMultiBranchRole } from '@/lib/branchAccess';
 import { useRealtimeStore } from '@/lib/realtime';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
 import { usePOSStore } from '@/store/posStore';
@@ -209,9 +209,10 @@ export function TopHeader({
     }
   };
 
-  const isMultiBranch = isMultiBranchRole(context?.role_code);
+  const isOwnerRole = isMultiBranchRole(context?.role_code);
+  const isMultiBranch = hasMultiBranchAccess(context, branches.length);
   const canManageBranches =
-    isMultiBranch && (hasPermission('branches:manage') || hasPermission('settings:manage'));
+    isOwnerRole && (hasPermission('branches:manage') || hasPermission('settings:manage'));
 
   const activeBranch =
     branches.find((b) => b.id === context?.branch_id) || branches[0] || null;

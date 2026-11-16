@@ -358,13 +358,29 @@ func seedRichMobileStoreData(
 			return nil, fmt.Errorf("insert user %s: %w", s.email, err)
 		}
 		var brNull uuid.NullUUID
+		allowedBranches := []uuid.UUID{}
+		allowedTerms := []uuid.UUID{}
+		allBranchesAccess := false
 		if s.branchID != nil {
 			brNull = uuid.NullUUID{UUID: *s.branchID, Valid: true}
+			allowedBranches = []uuid.UUID{*s.branchID}
+		}
+		if s.email == "manager@kovamobile.lk" {
+			// Store & Warranty Manager manages Colombo + Kandy branches and their POS registers
+			allowedBranches = []uuid.UUID{colBranchID, kndBranchID}
+			allowedTerms = []uuid.UUID{colTermID, kndTerm1, kndTerm2}
+		} else if s.email == "accountant@kovamobile.lk" {
+			// Senior Accountant audits across all company branches
+			allBranchesAccess = true
+			allowedBranches = []uuid.UUID{colBranchID, kndBranchID, galBranchID}
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO user_business_roles (user_id, business_id, branch_id, role_id, designation_id, supervisor_pin_hash, is_active)
-			VALUES ($1, $2, $3, $4, $5, $6, TRUE)
-		`, uid, bizID, brNull, roleIDs[s.role], desigIDs[s.desig], s.pin); err != nil {
+			INSERT INTO user_business_roles (
+				user_id, business_id, branch_id, role_id, designation_id, supervisor_pin_hash, is_active,
+				all_branches_access, allowed_branch_ids, allowed_terminal_ids
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8, $9)
+		`, uid, bizID, brNull, roleIDs[s.role], desigIDs[s.desig], s.pin, allBranchesAccess, allowedBranches, allowedTerms); err != nil {
 			return nil, fmt.Errorf("assign role %s: %w", s.email, err)
 		}
 		staffIDs = append(staffIDs, uid)
@@ -385,15 +401,20 @@ func seedRichMobileStoreData(
 	}
 	catRows.Close()
 
+	// Upgrade initial starter categories to Mobile & Electronics segments
+	_, _ = tx.Exec(ctx, `UPDATE categories SET gender_segment = 'Devices & Handsets' WHERE business_id = $1 AND slug = 'smartphones'`, bizID)
+	_, _ = tx.Exec(ctx, `UPDATE categories SET gender_segment = 'Power & Accessories' WHERE business_id = $1 AND slug = 'mobile-accessories'`, bizID)
+
 	extraCats := []struct {
-		name string
-		slug string
+		name    string
+		slug    string
+		segment string
 	}{
-		{"Tablets & Foldables", "tablets-foldables"},
-		{"Audio & Wearables", "audio-wearables"},
-		{"Power, Chargers & Cables", "power-chargers"},
-		{"Cases & Screen Armor", "cases-armor"},
-		{"5G Networking & Storage", "networking-storage"},
+		{"Tablets & Foldables", "tablets-foldables", "Devices & Handsets"},
+		{"Audio & Wearables", "audio-wearables", "Audio & Wearables"},
+		{"Power, Chargers & Cables", "power-chargers", "Power & Accessories"},
+		{"Cases & Screen Armor", "cases-armor", "Power & Accessories"},
+		{"5G Networking & Storage", "networking-storage", "Networking & Services"},
 	}
 	for _, c := range extraCats {
 		if _, ok := catBySlug[c.slug]; ok {
@@ -402,9 +423,9 @@ func seedRichMobileStoreData(
 		var cid uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO categories (business_id, tax_group_id, name, slug, gender_segment)
-			VALUES ($1, $2, $3, $4, 'Unisex')
+			VALUES ($1, $2, $3, $4, $5)
 			RETURNING id
-		`, bizID, stdTG, c.name, c.slug).Scan(&cid); err != nil {
+		`, bizID, stdTG, c.name, c.slug, c.segment).Scan(&cid); err != nil {
 			return nil, err
 		}
 		catBySlug[c.slug] = cid

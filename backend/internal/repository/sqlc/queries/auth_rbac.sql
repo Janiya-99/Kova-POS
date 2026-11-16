@@ -26,7 +26,11 @@ SELECT
     r.name AS role_name,
     COALESCE(d.max_pos_discount_pct, 100.00)::NUMERIC(5,2) AS max_pos_discount_pct,
     COALESCE(d.name, r.name)::TEXT AS designation_name,
-    ubr.supervisor_pin_hash
+    ubr.supervisor_pin_hash,
+    ubr.all_branches_access,
+    ubr.allowed_branch_ids,
+    ubr.allowed_terminal_ids,
+    ubr.default_terminal_id
 FROM user_business_roles ubr
 JOIN businesses b ON b.id = ubr.business_id AND b.is_active = TRUE
 JOIN roles r ON r.id = ubr.role_id
@@ -59,7 +63,11 @@ SELECT
     r.name AS role_name,
     COALESCE(d.max_pos_discount_pct, 100.00)::NUMERIC(5,2) AS max_pos_discount_pct,
     COALESCE(d.name, r.name)::TEXT AS designation_name,
-    ubr.supervisor_pin_hash
+    ubr.supervisor_pin_hash,
+    ubr.all_branches_access,
+    ubr.allowed_branch_ids,
+    ubr.allowed_terminal_ids,
+    ubr.default_terminal_id
 FROM user_business_roles ubr
 JOIN users u ON u.id = ubr.user_id AND u.is_active = TRUE
 JOIN businesses b ON b.id = ubr.business_id AND b.is_active = TRUE
@@ -105,7 +113,11 @@ SELECT
     sa.role_name,
     100.00::NUMERIC(5,2) AS max_pos_discount_pct,
     'System SuperAdmin'::TEXT AS designation_name,
-    sa.supervisor_pin_hash
+    sa.supervisor_pin_hash,
+    TRUE::BOOLEAN AS all_branches_access,
+    '{}'::UUID[] AS allowed_branch_ids,
+    '{}'::UUID[] AS allowed_terminal_ids,
+    NULL::UUID AS default_terminal_id
 FROM businesses b
 CROSS JOIN sa_membership sa
 WHERE b.is_active = TRUE
@@ -134,7 +146,11 @@ SELECT
     r.name AS role_name,
     100.00::NUMERIC(5,2) AS max_pos_discount_pct,
     'System SuperAdmin'::TEXT AS designation_name,
-    ubr.supervisor_pin_hash
+    ubr.supervisor_pin_hash,
+    TRUE::BOOLEAN AS all_branches_access,
+    '{}'::UUID[] AS allowed_branch_ids,
+    '{}'::UUID[] AS allowed_terminal_ids,
+    NULL::UUID AS default_terminal_id
 FROM users u
 JOIN user_business_roles ubr ON ubr.user_id = u.id AND ubr.is_active = TRUE
 JOIN roles r ON r.id = ubr.role_id AND r.code = 'SuperAdmin'
@@ -180,6 +196,12 @@ ORDER BY name ASC;
 SELECT id, business_id, branch_id, code, name, hardware_serial, is_active
 FROM terminals
 WHERE business_id = $1 AND branch_id = $2 AND is_active = TRUE
+ORDER BY code ASC;
+
+-- name: ListActiveTerminalsForBusiness :many
+SELECT id, business_id, branch_id, code, name, hardware_serial, is_active
+FROM terminals
+WHERE business_id = $1 AND is_active = TRUE
 ORDER BY code ASC;
 
 -- name: ListRolesWithPermissions :many

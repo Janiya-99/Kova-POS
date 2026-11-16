@@ -624,15 +624,19 @@ type User struct {
 }
 
 type UserBusinessRole struct {
-	ID                uuid.UUID          `json:"id"`
-	UserID            uuid.UUID          `json:"user_id"`
-	BusinessID        uuid.UUID          `json:"business_id"`
-	BranchID          uuid.NullUUID      `json:"branch_id"`
-	RoleID            uuid.UUID          `json:"role_id"`
-	SupervisorPinHash string             `json:"supervisor_pin_hash"`
-	IsActive          bool               `json:"is_active"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	DesignationID     uuid.NullUUID      `json:"designation_id"`
+	ID                 uuid.UUID          `json:"id"`
+	UserID             uuid.UUID          `json:"user_id"`
+	BusinessID         uuid.UUID          `json:"business_id"`
+	BranchID           uuid.NullUUID      `json:"branch_id"`
+	RoleID             uuid.UUID          `json:"role_id"`
+	SupervisorPinHash  string             `json:"supervisor_pin_hash"`
+	IsActive           bool               `json:"is_active"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	DesignationID      uuid.NullUUID      `json:"designation_id"`
+	AllBranchesAccess  bool               `json:"all_branches_access"`
+	AllowedBranchIds   []uuid.UUID        `json:"allowed_branch_ids"`
+	AllowedTerminalIds []uuid.UUID        `json:"allowed_terminal_ids"`
+	DefaultTerminalID  uuid.NullUUID      `json:"default_terminal_id"`
 }
 
 type UserSession struct {

@@ -112,6 +112,8 @@ export interface RecentActivityItem {
   order_channel: string;
   created_at: string;
   branch_name: string;
+  terminal_code?: string;
+  terminal_name?: string;
   cashier_name: string;
   customer_name: string;
   customer_avatar: string;
@@ -207,6 +209,101 @@ export interface TaxBreakdownItem {
   tax_collected: string;
 }
 
+export interface CompanyOverviewSummary {
+  business_id: string;
+  business_name: string;
+  trade_name: string;
+  legal_name: string;
+  tax_registration_no: string;
+  base_currency: string;
+  industry_profile: string;
+  default_language: string;
+  total_branches: number;
+  active_branches: number;
+  total_warehouses: number;
+  total_terminals: number;
+  active_terminals: number;
+  open_shift_terminals: number;
+  total_staff: number;
+  active_staff: number;
+  total_brands: number;
+  total_categories: number;
+  active_skus: number;
+  total_customers: number;
+  total_suppliers: number;
+  total_stock_units: string;
+  total_fifo_valuation: string;
+  period_paid_orders: number;
+  period_paid_revenue: string;
+  period_tax_collected: string;
+  period_gross_profit: string;
+}
+
+export interface BranchSalesPerformanceItem {
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  city: string;
+  country_code: string;
+  country_name: string;
+  address: string;
+  is_warehouse: boolean;
+  is_active: boolean;
+  terminal_count: number;
+  active_terminal_count: number;
+  open_shift_count: number;
+  staff_count: number;
+  paid_orders: number;
+  refund_void_count: number;
+  units_sold: number;
+  gross_subtotal: string;
+  discount_total: string;
+  tax_total: string;
+  paid_revenue: string;
+  average_order_value: string;
+  revenue_share_pct: string;
+  held_bill_count: number;
+  held_bill_total: string;
+  fifo_stock_units: string;
+  fifo_valuation: string;
+  total_cogs?: string;
+  gross_profit?: string;
+  margin_pct?: string;
+}
+
+export interface TerminalSalesPerformanceItem {
+  terminal_id: string;
+  terminal_code: string;
+  terminal_name: string;
+  hardware_serial: string;
+  is_active: boolean;
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
+  shift_status: string;
+  active_cashier_name: string;
+  opening_float: string;
+  paid_orders: number;
+  refund_void_count: number;
+  units_sold: number;
+  gross_subtotal: string;
+  discount_total: string;
+  tax_total: string;
+  paid_revenue: string;
+  average_order_value: string;
+  revenue_share_pct: string;
+  cash_sales: string;
+  card_sales: string;
+  qr_other_sales: string;
+  held_bill_count: number;
+  held_bill_total: string;
+  last_invoice_number: string;
+  last_sale_at: string;
+  total_cogs?: string;
+  gross_profit?: string;
+  margin_pct?: string;
+}
+
 export interface OverviewResponse {
   period: OverviewPeriod;
   period_label: string;
@@ -219,6 +316,9 @@ export interface OverviewResponse {
   branch_scope: string;
   capabilities: OverviewCapabilities;
   kpi: OverviewKPI;
+  company_overview?: CompanyOverviewSummary;
+  branch_sales?: BranchSalesPerformanceItem[];
+  terminal_sales?: TerminalSalesPerformanceItem[];
   sales_analytics: SalesAnalyticsPoint[];
   revenue_bars: RevenueBarPoint[];
   order_sparkline: OrderSparkPoint[];

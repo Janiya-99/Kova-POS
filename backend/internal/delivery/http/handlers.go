@@ -642,7 +642,13 @@ func (h *Handler) GetOverview(c *fiber.Ctx) error {
 			reqBranchID = parsed
 		}
 	}
-	data, err := h.analyticsUC(c).GetOverviewDashboard(c.UserContext(), tc, period, reqBranchID)
+	var reqTerminalID uuid.UUID
+	if rawTerm := strings.TrimSpace(c.Query("terminal_id")); rawTerm != "" {
+		if parsed, err := uuid.Parse(rawTerm); err == nil {
+			reqTerminalID = parsed
+		}
+	}
+	data, err := h.analyticsUC(c).GetOverviewDashboard(c.UserContext(), tc, period, reqBranchID, reqTerminalID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -810,7 +816,7 @@ func (h *Handler) ListInventory(c *fiber.Ctx) error {
 	if scopedBranch == uuid.Nil {
 		scopedBranch = tc.BranchID
 	}
-	data, err := h.inventoryUC(c).ListBatchesAndGRNs(c.UserContext(), tc.BusinessID, scopedBranch, usecase.IsMultiBranchRole(tc.RoleCode))
+	data, err := h.inventoryUC(c).ListBatchesAndGRNs(c.UserContext(), tc.BusinessID, scopedBranch, tc.HasMultiBranchAccess())
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -827,7 +833,7 @@ func (h *Handler) CreateGRN(c *fiber.Ctx) error {
 	if _, err := usecase.ResolveScopedBranchID(tc, req.BranchID); err != nil {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
 	}
-	res, err := h.inventoryUC(c).CreateGRN(c.UserContext(), tc.BusinessID, tc.BranchID, tc.UserID, usecase.IsMultiBranchRole(tc.RoleCode), req)
+	res, err := h.inventoryUC(c).CreateGRN(c.UserContext(), tc.BusinessID, tc.BranchID, tc.UserID, tc.HasMultiBranchAccess(), req)
 	if err != nil {
 		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -2192,18 +2198,18 @@ func branchTerminalMutationStatus(err error) int {
 	return fiber.StatusUnprocessableEntity
 }
 
-// ListBranches lists company branches inside the company's dedicated DB, clamped to 1 branch for non-owner roles.
+// ListBranches lists company branches inside the company's dedicated DB, scoped to the user's authorized branches.
 func (h *Handler) ListBranches(c *fiber.Ctx) error {
 	tc, _ := middleware.GetTenantContext(c)
 	rows, err := h.branchesUC(c).ListBranchesManagement(c.UserContext(), tc)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	isMulti := usecase.IsMultiBranchRole(tc.RoleCode)
+	isOwner := usecase.IsMultiBranchRole(tc.RoleCode)
 	return c.JSON(fiber.Map{
 		"branches":            rows,
-		"can_manage_branches": isMulti,
-		"can_switch_branch":   isMulti,
+		"can_manage_branches": isOwner,
+		"can_switch_branch":   tc.HasMultiBranchAccess(),
 	})
 }
 

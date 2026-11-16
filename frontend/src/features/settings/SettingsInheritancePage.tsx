@@ -488,8 +488,13 @@ export function SettingsInheritancePage() {
   const [formRoleId, setFormRoleId] = React.useState('');
   const [formDesigId, setFormDesigId] = React.useState('');
   const [formBranchId, setFormBranchId] = React.useState('ALL');
+  const [formAllBranches, setFormAllBranches] = React.useState(false);
+  const [formAllowedBranchIds, setFormAllowedBranchIds] = React.useState<string[]>([]);
+  const [formAllowedTerminalIds, setFormAllowedTerminalIds] = React.useState<string[]>([]);
+  const [formDefaultTerminalId, setFormDefaultTerminalId] = React.useState('AUTO');
   const [formActive, setFormActive] = React.useState(true);
   const [formPin, setFormPin] = React.useState('');
+  const [formErrors, setFormErrors] = React.useState<Record<string, string>>({});
   const [savingUser, setSavingUser] = React.useState(false);
   const [inheritanceSearch, setInheritanceSearch] = React.useState('');
   const [inheritanceCategory, setInheritanceCategory] = React.useState<string>('ALL');
@@ -1038,6 +1043,22 @@ export function SettingsInheritancePage() {
   };
 
   const availableAccessBranches = accessData?.branches || branches;
+  const availableAccessTerminals = React.useMemo(
+    () =>
+      accessData?.terminals ||
+      terminals.map((tm) => {
+        const br = availableAccessBranches.find((b) => b.id === tm.branch_id);
+        return {
+          id: tm.id,
+          branch_id: tm.branch_id,
+          branch_code: br?.code || '',
+          branch_name: br?.name || '',
+          code: tm.code,
+          name: tm.name,
+        };
+      }),
+    [accessData?.terminals, terminals, availableAccessBranches]
+  );
   const defaultConcreteBranchId =
     availableAccessBranches[0]?.id || context?.branch_id || '';
   const selectedFormRoleCode =
@@ -1048,9 +1069,30 @@ export function SettingsInheritancePage() {
     setFormRoleId(nextRoleId);
     const nextRoleCode =
       (accessData?.roles || []).find((r) => r.id === nextRoleId)?.code || '';
-    if (!isMultiBranchRole(nextRoleCode) && (!formBranchId || formBranchId === 'ALL')) {
+    if (isMultiBranchRole(nextRoleCode)) {
+      setFormAllBranches(true);
+      setFormBranchId('ALL');
+    } else if (!formAllBranches && formAllowedBranchIds.length === 0 && defaultConcreteBranchId) {
+      setFormAllowedBranchIds([defaultConcreteBranchId]);
       setFormBranchId(defaultConcreteBranchId);
     }
+  };
+
+  const toggleAllowedBranch = (bid: string) => {
+    setFormAllowedBranchIds((prev) => {
+      const next = prev.includes(bid) ? prev.filter((id) => id !== bid) : [...prev, bid];
+      if (next.length > 0 && (!formBranchId || formBranchId === 'ALL' || !next.includes(formBranchId))) {
+        setFormBranchId(next[0]);
+      }
+      return next;
+    });
+    setFormErrors((prev) => ({ ...prev, branch: '' }));
+  };
+
+  const toggleAllowedTerminal = (tid: string) => {
+    setFormAllowedTerminalIds((prev) =>
+      prev.includes(tid) ? prev.filter((id) => id !== tid) : [...prev, tid]
+    );
   };
 
   const openCreateAccessModal = () => {
@@ -1058,17 +1100,27 @@ export function SettingsInheritancePage() {
       accessData?.roles.find((r) => r.code === 'SuperAdmin') ||
       accessData?.roles.find((r) => r.code === 'BusinessOwner') ||
       accessData?.roles[0];
+    const isOwner = isMultiBranchRole(defaultRole?.code);
     setEditingUser(null);
     setFormFullName('');
     setFormEmail('');
     setFormPassword('');
     setFormRoleId(defaultRole?.id || '');
     setFormDesigId(accessData?.designations[0]?.id || 'NONE');
-    setFormBranchId(
-      isMultiBranchRole(defaultRole?.code) ? 'ALL' : defaultConcreteBranchId
+    setFormAllBranches(isOwner);
+    setFormAllowedBranchIds(
+      isOwner
+        ? availableAccessBranches.map((b) => b.id)
+        : defaultConcreteBranchId
+        ? [defaultConcreteBranchId]
+        : []
     );
+    setFormBranchId(isOwner ? 'ALL' : defaultConcreteBranchId);
+    setFormAllowedTerminalIds([]);
+    setFormDefaultTerminalId('AUTO');
     setFormActive(true);
     setFormPin('');
+    setFormErrors({});
     setUserModalOpen(true);
   };
 
@@ -1079,12 +1131,25 @@ export function SettingsInheritancePage() {
     setFormPassword('');
     setFormRoleId(row.role_id);
     setFormDesigId(row.designation_id || 'NONE');
-    const rowMulti = isMultiBranchRole(row.role_code);
+    const rowAll = Boolean(row.all_branches_access || isMultiBranchRole(row.role_code));
+    const existingBranches =
+      row.allowed_branch_ids && row.allowed_branch_ids.length > 0
+        ? row.allowed_branch_ids
+        : row.branch_id
+        ? [row.branch_id]
+        : defaultConcreteBranchId
+        ? [defaultConcreteBranchId]
+        : [];
+    setFormAllBranches(rowAll);
+    setFormAllowedBranchIds(existingBranches);
     setFormBranchId(
-      row.branch_id || (rowMulti ? 'ALL' : defaultConcreteBranchId)
+      row.branch_id || (rowAll ? 'ALL' : existingBranches[0] || defaultConcreteBranchId)
     );
+    setFormAllowedTerminalIds(row.allowed_terminal_ids || []);
+    setFormDefaultTerminalId(row.default_terminal_id || 'AUTO');
     setFormActive(row.is_active);
     setFormPin('');
+    setFormErrors({});
     setUserModalOpen(true);
   };
 
@@ -1094,6 +1159,8 @@ export function SettingsInheritancePage() {
       role_id: string;
       designation_id: string;
       branch_id: string | null;
+      all_branches_access: boolean;
+      allowed_branch_ids: string[];
       is_active: boolean;
     }>
   ) => {
@@ -1103,7 +1170,21 @@ export function SettingsInheritancePage() {
       row.role_code;
     let nextBranchId: string | null =
       patch.branch_id !== undefined ? patch.branch_id : row.branch_id || null;
-    if (!isMultiBranchRole(nextRoleCode) && !nextBranchId) {
+    const nextAllBranches =
+      patch.all_branches_access !== undefined
+        ? patch.all_branches_access
+        : patch.branch_id === null
+        ? true
+        : patch.branch_id
+        ? false
+        : Boolean(row.all_branches_access || isMultiBranchRole(nextRoleCode));
+    const nextAllowedBranches =
+      patch.allowed_branch_ids !== undefined
+        ? patch.allowed_branch_ids
+        : patch.branch_id
+        ? [patch.branch_id]
+        : row.allowed_branch_ids || (nextBranchId ? [nextBranchId] : []);
+    if (!nextAllBranches && !nextBranchId && nextAllowedBranches.length === 0) {
       nextBranchId = defaultConcreteBranchId || null;
     }
     try {
@@ -1115,6 +1196,9 @@ export function SettingsInheritancePage() {
           role_id: nextRoleId,
           designation_id: (patch.designation_id ?? row.designation_id) || null,
           branch_id: nextBranchId,
+          all_branches_access: nextAllBranches,
+          allowed_branch_ids: nextAllowedBranches,
+          allowed_terminal_ids: row.allowed_terminal_ids || [],
           is_active: patch.is_active ?? row.is_active,
         }),
       });
@@ -1127,31 +1211,53 @@ export function SettingsInheritancePage() {
 
   const handleSaveAccessUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errs: Record<string, string> = {};
     if (!formFullName.trim()) {
-      toast.error('Full name is required');
-      return;
+      errs.fullName = 'Full name is required';
     }
     if (!editingUser && (!formEmail.trim() || !formEmail.includes('@'))) {
-      toast.error('Valid email is required');
-      return;
+      errs.email = 'Valid work email is required';
     }
-    if (!selectedRoleSupportsAllBranches && (!formBranchId || formBranchId === 'ALL')) {
-      toast.error('Assigned branch is required (only BusinessOwner and SuperAdmin can access all branches)');
-      return;
+    if (!formAllBranches && formAllowedBranchIds.length === 0 && (!formBranchId || formBranchId === 'ALL')) {
+      errs.branch = 'Select at least one branch or enable All Branches access';
     }
     if (formPin.trim() && formPin.trim().length !== 6) {
-      toast.error('Supervisor PIN must be exactly 6 digits');
+      errs.pin = 'Supervisor PIN must be exactly 6 digits';
+    }
+    if (Object.keys(errs).length > 0) {
+      setFormErrors(errs);
+      toast.error(Object.values(errs)[0]);
       return;
     }
+    setFormErrors({});
 
     setSavingUser(true);
     try {
+      const effectiveAllowedBranches = formAllBranches
+        ? []
+        : formAllowedBranchIds.length > 0
+        ? formAllowedBranchIds
+        : formBranchId && formBranchId !== 'ALL'
+        ? [formBranchId]
+        : [];
+      const primaryBranchId =
+        formBranchId && formBranchId !== 'ALL'
+          ? formBranchId
+          : effectiveAllowedBranches[0] || null;
+
       const payload: Record<string, unknown> = {
         full_name: formFullName.trim(),
         email: formEmail.trim().toLowerCase(),
         role_id: formRoleId,
         designation_id: formDesigId && formDesigId !== 'NONE' ? formDesigId : null,
-        branch_id: formBranchId && formBranchId !== 'ALL' ? formBranchId : null,
+        branch_id: primaryBranchId,
+        all_branches_access: formAllBranches,
+        allowed_branch_ids: effectiveAllowedBranches,
+        allowed_terminal_ids: formAllowedTerminalIds,
+        default_terminal_id:
+          formDefaultTerminalId && formDefaultTerminalId !== 'AUTO'
+            ? formDefaultTerminalId
+            : null,
         is_active: formActive,
       };
       if (formPin.trim()) payload.supervisor_pin = formPin.trim();
@@ -2563,40 +2669,68 @@ export function SettingsInheritancePage() {
                         </Can>
                       </TableCell>
                       <TableCell>
-                        <Can
-                          permission="rbac:manage"
-                          fallback={
-                            <span className="text-[11.5px] font-medium text-ink">
-                              {row.branch_name || 'All Branches'}
-                            </span>
-                          }
-                        >
-                          <Select
-                            value={row.branch_id || (isMultiBranchRole(row.role_code) ? 'ALL' : defaultConcreteBranchId)}
-                            onValueChange={(val) =>
-                              updateRowInline(row, {
-                                branch_id: val === 'ALL' ? null : val,
-                              })
+                        <div className="space-y-1">
+                          <Can
+                            permission="rbac:manage"
+                            fallback={
+                              <span className="text-[11.5px] font-medium text-ink">
+                                {row.all_branches_access || isMultiBranchRole(row.role_code)
+                                  ? 'All Branches'
+                                  : (row.allowed_branch_ids?.length ?? 0) > 1
+                                  ? `${row.allowed_branch_ids?.length} Branches`
+                                  : row.branch_name || 'All Branches'}
+                              </span>
                             }
                           >
-                            <SelectTrigger
-                              className="h-8 min-w-[155px] text-[11.5px]"
-                              data-testid={`access-row-branch-${row.email}`}
+                            <Select
+                              value={
+                                row.all_branches_access || isMultiBranchRole(row.role_code)
+                                  ? 'ALL'
+                                  : row.branch_id || defaultConcreteBranchId
+                              }
+                              onValueChange={(val) =>
+                                updateRowInline(row, {
+                                  branch_id: val === 'ALL' ? null : val,
+                                  all_branches_access: val === 'ALL',
+                                  allowed_branch_ids: val === 'ALL' ? [] : [val],
+                                })
+                              }
                             >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {isMultiBranchRole(row.role_code) && (
+                              <SelectTrigger
+                                className="h-8 min-w-[155px] text-[11.5px]"
+                                data-testid={`access-row-branch-${row.email}`}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
                                 <SelectItem value="ALL">All Branches</SelectItem>
-                              )}
-                              {availableAccessBranches.map((b) => (
-                                <SelectItem key={b.id} value={b.id}>
-                                  {b.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </Can>
+                                {availableAccessBranches.map((b) => (
+                                  <SelectItem key={b.id} value={b.id}>
+                                    {b.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Can>
+                          <div className="flex flex-wrap items-center gap-1">
+                            {row.all_branches_access || isMultiBranchRole(row.role_code) ? (
+                              <Badge variant="lavender" className="text-[9.5px] px-1.5 py-0">
+                                All Branches ({availableAccessBranches.length})
+                              </Badge>
+                            ) : (row.allowed_branch_ids?.length ?? 0) > 1 ? (
+                              <Badge variant="accent" className="text-[9.5px] px-1.5 py-0">
+                                {row.allowed_branch_ids?.length} Branches Assigned
+                              </Badge>
+                            ) : null}
+                            {(row.allowed_terminal_ids?.length ?? 0) > 0 ? (
+                              <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 font-mono">
+                                {row.allowed_terminal_ids?.length} POS Term
+                              </Badge>
+                            ) : (
+                              <span className="text-[10px] text-ink-muted">All Branch POS</span>
+                            )}
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={row.has_pin ? 'positive' : 'outline'}>
@@ -2802,38 +2936,54 @@ export function SettingsInheritancePage() {
 
       {/* Create / Edit Admin Login Dialog */}
       <Dialog open={userModalOpen} onOpenChange={setUserModalOpen}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {editingUser ? `Edit Access: ${editingUser.full_name}` : 'Add Admin / Staff Login'}
+              {editingUser ? `Edit Access & Branch/Terminal Scope: ${editingUser.full_name}` : 'Add Admin / Staff Login'}
             </DialogTitle>
             <DialogDescription>
-              Configure tenant role assignment, designation cap, branch scope, and 6-digit Supervisor PIN.
+              Configure tenant role assignment, designation discount cap, multi-branch &amp; POS terminal access, and 6-digit Supervisor PIN.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSaveAccessUser} className="space-y-3 pt-1">
+          <form onSubmit={handleSaveAccessUser} noValidate className="space-y-3.5 pt-1">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-ink">Full Name</label>
+                <label className="text-[11px] font-semibold text-ink">Full Name *</label>
                 <Input
                   value={formFullName}
-                  onChange={(e) => setFormFullName(e.target.value)}
+                  onChange={(e) => {
+                    setFormFullName(e.target.value);
+                    if (formErrors.fullName) setFormErrors((prev) => ({ ...prev, fullName: '' }));
+                  }}
                   placeholder="e.g., Alex Fernando"
-                  required
+                  aria-invalid={Boolean(formErrors.fullName)}
                 />
+                {formErrors.fullName && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="user-fullname-error">
+                    {formErrors.fullName}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-ink">Work Email</label>
+                <label className="text-[11px] font-semibold text-ink">Work Email *</label>
                 <Input
                   type="email"
                   value={formEmail}
-                  onChange={(e) => setFormEmail(e.target.value)}
+                  onChange={(e) => {
+                    setFormEmail(e.target.value);
+                    if (formErrors.email) setFormErrors((prev) => ({ ...prev, email: '' }));
+                  }}
                   disabled={Boolean(editingUser)}
                   placeholder="admin@company.com"
-                  required
+                  aria-invalid={Boolean(formErrors.email)}
                 />
+                {formErrors.email && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="user-email-error">
+                    {formErrors.email}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -2912,37 +3062,176 @@ export function SettingsInheritancePage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-[11px] font-semibold text-ink">
-                  Branch Assignment {!selectedRoleSupportsAllBranches ? '*' : ''}
-                </label>
-                <Select value={formBranchId} onValueChange={setFormBranchId}>
-                  <SelectTrigger data-testid="access-user-branch-select">
-                    <SelectValue
-                      placeholder={
-                        selectedRoleSupportsAllBranches ? 'All Branches' : 'Select Assigned Branch'
+            {/* Multi-Branch Scope Assignment Box */}
+            <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/50 p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-ink">Branch Access Scope (1, Multiple, or All Branches)</p>
+                  <p className="text-[10.5px] text-ink-muted">
+                    Users with multiple branches can switch branches in the header and view consolidated multi-branch overviews.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2 rounded-full border border-border-theme bg-surface px-2.5 py-1 text-[11px] font-semibold text-ink cursor-pointer">
+                  <Switch
+                    checked={formAllBranches}
+                    disabled={selectedRoleSupportsAllBranches}
+                    onCheckedChange={(checked) => {
+                      setFormAllBranches(checked);
+                      if (checked) {
+                        setFormBranchId('ALL');
+                        setFormErrors((prev) => ({ ...prev, branch: '' }));
+                      } else if (formAllowedBranchIds.length === 0 && defaultConcreteBranchId) {
+                        setFormAllowedBranchIds([defaultConcreteBranchId]);
+                        setFormBranchId(defaultConcreteBranchId);
                       }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectedRoleSupportsAllBranches && (
-                      <SelectItem value="ALL">All Branches</SelectItem>
-                    )}
-                    {availableAccessBranches.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-[10px] text-ink-muted">
-                  {selectedRoleSupportsAllBranches
-                    ? 'Company Owners and SuperAdmins can switch across all company branches.'
-                    : 'Locked to 1 assigned branch. Only BusinessOwner / SuperAdmin get multi-branch access.'}
-                </p>
+                    }}
+                    data-testid="access-user-all-branches-switch"
+                  />
+                  <span>All Company Branches</span>
+                </label>
               </div>
 
+              {!formAllBranches && (
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {availableAccessBranches.map((b) => {
+                    const checked = formAllowedBranchIds.includes(b.id);
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => toggleAllowedBranch(b.id)}
+                        data-testid={`access-branch-check-${b.code}`}
+                        className={`flex items-center justify-between gap-2 rounded-[var(--theme-radius-control)] border px-2.5 py-1.5 text-left text-xs transition cursor-pointer ${
+                          checked
+                            ? 'border-accent bg-accent-soft/30 font-bold text-ink'
+                            : 'border-border-theme bg-surface text-ink-muted hover:text-ink'
+                        }`}
+                      >
+                        <span className="truncate">
+                          <strong className="font-mono text-[10.5px]">{b.code}</strong> • {b.name}
+                        </span>
+                        <span
+                          className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                            checked ? 'border-accent bg-accent text-white' : 'border-border-theme'
+                          }`}
+                        >
+                          {checked && <Check className="h-3 w-3" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {formErrors.branch && (
+                <p className="text-[11px] font-medium text-red-500" data-testid="user-branch-error">
+                  {formErrors.branch}
+                </p>
+              )}
+
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 pt-1">
+                <div className="space-y-1">
+                  <label className="text-[10.5px] font-semibold text-ink">
+                    Default / Primary Branch on Login
+                  </label>
+                  <Select value={formBranchId} onValueChange={setFormBranchId}>
+                    <SelectTrigger data-testid="access-user-branch-select" className="h-8 text-xs">
+                      <SelectValue placeholder="Select Primary Branch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {formAllBranches && <SelectItem value="ALL">All Branches (Consolidated)</SelectItem>}
+                      {availableAccessBranches
+                        .filter((b) => formAllBranches || formAllowedBranchIds.includes(b.id))
+                        .map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.code} — {b.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10.5px] font-semibold text-ink">
+                    Default POS Terminal on Login
+                  </label>
+                  <Select value={formDefaultTerminalId} onValueChange={setFormDefaultTerminalId}>
+                    <SelectTrigger data-testid="access-user-default-terminal-select" className="h-8 text-xs">
+                      <SelectValue placeholder="Auto-select First Terminal" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="AUTO">Auto (First Branch Terminal)</SelectItem>
+                      {availableAccessTerminals
+                        .filter(
+                          (tm) =>
+                            (formAllBranches || formAllowedBranchIds.includes(tm.branch_id)) &&
+                            (formAllowedTerminalIds.length === 0 || formAllowedTerminalIds.includes(tm.id))
+                        )
+                        .map((tm) => (
+                          <SelectItem key={tm.id} value={tm.id}>
+                            {tm.code} — {tm.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            {/* Multi-Terminal Assignment Box */}
+            <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/50 p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-bold text-ink">POS Terminal Assignment</p>
+                  <p className="text-[10.5px] text-ink-muted">
+                    Leave all unchecked to allow all terminals in the user&apos;s assigned branches, or select specific registers.
+                  </p>
+                </div>
+                {formAllowedTerminalIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setFormAllowedTerminalIds([])}
+                    className="text-[10.5px] font-semibold text-accent hover:underline cursor-pointer"
+                  >
+                    Allow All Terminals ({formAllowedTerminalIds.length} selected)
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                {availableAccessTerminals
+                  .filter((tm) => formAllBranches || formAllowedBranchIds.includes(tm.branch_id))
+                  .map((tm) => {
+                    const checked = formAllowedTerminalIds.includes(tm.id);
+                    return (
+                      <button
+                        key={tm.id}
+                        type="button"
+                        onClick={() => toggleAllowedTerminal(tm.id)}
+                        data-testid={`access-terminal-check-${tm.code}`}
+                        className={`flex items-center justify-between gap-2 rounded-[var(--theme-radius-control)] border px-2.5 py-1.5 text-left text-xs transition cursor-pointer ${
+                          checked
+                            ? 'border-accent bg-accent-soft/30 font-bold text-ink'
+                            : 'border-border-theme bg-surface text-ink-muted hover:text-ink'
+                        }`}
+                      >
+                        <span className="truncate">
+                          <strong className="font-mono text-[10.5px]">{tm.code}</strong> • {tm.name}
+                        </span>
+                        <span
+                          className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                            checked ? 'border-accent bg-accent text-white' : 'border-border-theme'
+                          }`}
+                        >
+                          {checked && <Check className="h-3 w-3" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="text-[11px] font-semibold text-ink">
                   6-Digit Supervisor PIN {editingUser?.has_pin ? '(optional overwrite)' : ''}
@@ -2951,16 +3240,25 @@ export function SettingsInheritancePage() {
                   value={formPin}
                   maxLength={6}
                   inputMode="numeric"
-                  onChange={(e) => setFormPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={(e) => {
+                    setFormPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                    if (formErrors.pin) setFormErrors((prev) => ({ ...prev, pin: '' }));
+                  }}
                   placeholder="Enter 6-digit PIN"
                   className="font-mono tabular-nums"
+                  aria-invalid={Boolean(formErrors.pin)}
                 />
+                {formErrors.pin && (
+                  <p className="text-[11px] font-medium text-red-500" data-testid="user-pin-error">
+                    {formErrors.pin}
+                  </p>
+                )}
               </div>
-            </div>
 
-            <div className="flex items-center justify-between rounded-[var(--theme-radius-inner)] bg-surface-muted px-3 py-2">
-              <span className="text-xs font-semibold text-ink">Account Active</span>
-              <Switch checked={formActive} onCheckedChange={setFormActive} />
+              <div className="flex items-center justify-between rounded-[var(--theme-radius-inner)] bg-surface-muted px-3 py-2 self-end h-10">
+                <span className="text-xs font-semibold text-ink">Account Active</span>
+                <Switch checked={formActive} onCheckedChange={setFormActive} />
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

@@ -93,6 +93,23 @@ func TestResolveScopedBranchID(t *testing.T) {
 	if _, err := ResolveScopedBranchID(managerTC, branchB); err == nil {
 		t.Fatalf("branch manager requesting another branch B must be rejected")
 	}
+
+	// Multi-branch assigned manager (assigned branchA and branchB)
+	multiManagerTC := domain.TenantContext{
+		RoleCode:         "BranchManager",
+		BranchID:         branchA,
+		AllowedBranchIDs: []string{branchA.String(), branchB.String()},
+	}
+	if !multiManagerTC.HasMultiBranchAccess() {
+		t.Fatalf("expected multi-branch assigned manager to have HasMultiBranchAccess=true")
+	}
+	if got, err := ResolveScopedBranchID(multiManagerTC, branchB); err != nil || got != branchB {
+		t.Fatalf("multi-branch manager requesting assigned branch B failed: got=%s err=%v", got, err)
+	}
+	branchC := uuid.New()
+	if _, err := ResolveScopedBranchID(multiManagerTC, branchC); err == nil {
+		t.Fatalf("multi-branch manager requesting unassigned branch C must be rejected")
+	}
 }
 
 func TestNormalizeBranchAndTerminalInput(t *testing.T) {
