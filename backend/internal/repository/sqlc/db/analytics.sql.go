@@ -255,8 +255,8 @@ const getOverviewPeriodSummary = `-- name: GetOverviewPeriodSummary :one
 WITH inv_agg AS (
     SELECT
         COUNT(*) FILTER (WHERE si.status = 'PAID')::INT AS paid_order_count,
-        COUNT(*) FILTER (WHERE si.status IN ('VOID', 'REFUND', 'REFUNDED'))::INT AS refund_void_count,
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COUNT(*) FILTER (WHERE (si.original_invoice_id IS NOT NULL AND si.status = 'REFUND') OR (si.original_invoice_id IS NULL AND si.status IN ('VOID', 'REFUND', 'REFUNDED') AND NOT EXISTS (SELECT 1 FROM sales_invoices ch WHERE ch.original_invoice_id = si.id)))::INT AS refund_void_count,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, si.grand_total - si.refunded_total) ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_discounts,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_taxes,
@@ -272,8 +272,8 @@ WITH inv_agg AS (
 ),
 item_agg AS (
     SELECT
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold,
-        COALESCE(SUM(CASE WHEN si.status IN ('VOID', 'REFUND', 'REFUNDED') THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_returned
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, sii.qty - sii.returned_qty) ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold,
+        COALESCE(SUM(CASE WHEN si.status IN ('VOID', 'REFUND', 'REFUNDED') THEN sii.qty WHEN si.status = 'PAID' THEN sii.returned_qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_returned
     FROM sales_invoice_items sii
     JOIN sales_invoices si ON si.id = sii.invoice_id
     WHERE si.business_id = $1
@@ -367,19 +367,25 @@ func (q *Queries) GetOverviewPeriodSummary(ctx context.Context, arg GetOverviewP
 
 const getSalesReportTotals = `-- name: GetSalesReportTotals :one
 SELECT
-    COALESCE(COUNT(*) FILTER (WHERE status = 'PAID'), 0)::INT AS paid_count,
-    COALESCE(COUNT(*) FILTER (WHERE status IN ('VOID', 'REFUND', 'REFUNDED')), 0)::INT AS void_refund_count,
-    COALESCE(SUM(CASE WHEN status = 'PAID' THEN subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
-    COALESCE(SUM(CASE WHEN status = 'PAID' THEN discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_discounts,
-    COALESCE(SUM(CASE WHEN status = 'PAID' THEN tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_taxes,
-    COALESCE(SUM(CASE WHEN status = 'PAID' THEN grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS net_revenue,
-    COALESCE(SUM(CASE WHEN status = 'PAID' THEN total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs,
-    COALESCE(SUM(CASE WHEN status IN ('VOID', 'REFUND', 'REFUNDED') THEN grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS refunded_amount
-FROM sales_invoices
-WHERE business_id = $1
-  AND created_at >= $2::TIMESTAMPTZ
-  AND created_at <= $3::TIMESTAMPTZ
-  AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR branch_id = $4::UUID)
+    COALESCE(COUNT(*) FILTER (WHERE si.status = 'PAID'), 0)::INT AS paid_count,
+    COALESCE(COUNT(*) FILTER (WHERE (si.original_invoice_id IS NOT NULL AND si.status = 'REFUND') OR (si.original_invoice_id IS NULL AND si.status IN ('VOID', 'REFUND', 'REFUNDED') AND NOT EXISTS (SELECT 1 FROM sales_invoices ch WHERE ch.original_invoice_id = si.id))), 0)::INT AS void_refund_count,
+    COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
+    COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_discounts,
+    COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_taxes,
+    COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, si.grand_total - si.refunded_total) ELSE 0 END), 0)::NUMERIC(19,4) AS net_revenue,
+    COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs,
+    COALESCE(SUM(
+        CASE
+            WHEN si.original_invoice_id IS NOT NULL AND si.status = 'REFUND' THEN si.grand_total
+            WHEN si.original_invoice_id IS NULL AND si.status IN ('VOID', 'REFUND', 'REFUNDED') AND NOT EXISTS (SELECT 1 FROM sales_invoices ch WHERE ch.original_invoice_id = si.id) THEN si.grand_total
+            ELSE 0
+        END
+    ), 0)::NUMERIC(19,4) AS refunded_amount
+FROM sales_invoices si
+WHERE si.business_id = $1
+  AND si.created_at >= $2::TIMESTAMPTZ
+  AND si.created_at <= $3::TIMESTAMPTZ
+  AND ($4::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR si.branch_id = $4::UUID)
 `
 
 type GetSalesReportTotalsParams struct {
@@ -1346,7 +1352,7 @@ WITH br_sales AS (
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS discount_total,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS tax_total,
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, si.grand_total - si.refunded_total) ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs
     FROM sales_invoices si
     WHERE si.business_id = $1
@@ -1357,7 +1363,7 @@ WITH br_sales AS (
 br_items AS (
     SELECT
         si.branch_id,
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, sii.qty - sii.returned_qty) ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
     FROM sales_invoice_items sii
     JOIN sales_invoices si ON si.id = sii.invoice_id
     WHERE si.business_id = $1
@@ -1633,7 +1639,7 @@ const listOverviewSalesTimeBuckets = `-- name: ListOverviewSalesTimeBuckets :man
 WITH inv_buckets AS (
     SELECT
         (date_trunc($6::TEXT, si.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::TIMESTAMPTZ AS bucket_ts,
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, si.grand_total - si.refunded_total) ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS total_taxes,
         COUNT(*) FILTER (WHERE si.status = 'PAID')::INT AS order_count
@@ -1753,7 +1759,7 @@ WITH tm_sales AS (
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.subtotal ELSE 0 END), 0)::NUMERIC(19,4) AS gross_subtotal,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.discount_total ELSE 0 END), 0)::NUMERIC(19,4) AS discount_total,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.tax_total ELSE 0 END), 0)::NUMERIC(19,4) AS tax_total,
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.grand_total ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, si.grand_total - si.refunded_total) ELSE 0 END), 0)::NUMERIC(19,4) AS paid_revenue,
         COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN si.total_cogs ELSE 0 END), 0)::NUMERIC(19,4) AS total_cogs
     FROM sales_invoices si
     WHERE si.business_id = $1
@@ -1764,7 +1770,7 @@ WITH tm_sales AS (
 tm_items AS (
     SELECT
         si.terminal_id,
-        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN sii.qty ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
+        COALESCE(SUM(CASE WHEN si.status = 'PAID' THEN GREATEST(0, sii.qty - sii.returned_qty) ELSE 0 END), 0)::NUMERIC(19,4) AS units_sold
     FROM sales_invoice_items sii
     JOIN sales_invoices si ON si.id = sii.invoice_id
     WHERE si.business_id = $1

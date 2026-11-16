@@ -122,6 +122,32 @@ func (q *Queries) GetInvoiceByIdempotencyKey(ctx context.Context, arg GetInvoice
 	return i, err
 }
 
+const incrementSalesInvoiceItemReturnedQty = `-- name: IncrementSalesInvoiceItemReturnedQty :one
+UPDATE sales_invoice_items
+SET returned_qty = returned_qty + $3
+WHERE business_id = $1 AND id = $2 AND (qty - returned_qty) >= $3
+RETURNING id, qty, returned_qty
+`
+
+type IncrementSalesInvoiceItemReturnedQtyParams struct {
+	BusinessID  uuid.UUID       `json:"business_id"`
+	ID          uuid.UUID       `json:"id"`
+	ReturnedQty decimal.Decimal `json:"returned_qty"`
+}
+
+type IncrementSalesInvoiceItemReturnedQtyRow struct {
+	ID          uuid.UUID       `json:"id"`
+	Qty         decimal.Decimal `json:"qty"`
+	ReturnedQty decimal.Decimal `json:"returned_qty"`
+}
+
+func (q *Queries) IncrementSalesInvoiceItemReturnedQty(ctx context.Context, arg IncrementSalesInvoiceItemReturnedQtyParams) (IncrementSalesInvoiceItemReturnedQtyRow, error) {
+	row := q.db.QueryRow(ctx, incrementSalesInvoiceItemReturnedQty, arg.BusinessID, arg.ID, arg.ReturnedQty)
+	var i IncrementSalesInvoiceItemReturnedQtyRow
+	err := row.Scan(&i.ID, &i.Qty, &i.ReturnedQty)
+	return i, err
+}
+
 const insertHeldBill = `-- name: InsertHeldBill :one
 INSERT INTO suspended_bills (
     business_id, branch_id, terminal_id, cashier_user_id, customer_id,
@@ -544,6 +570,138 @@ func (q *Queries) ListHeldBillsForBranch(ctx context.Context, arg ListHeldBillsF
 	return items, nil
 }
 
+const listRecentPOSInvoicesForReturn = `-- name: ListRecentPOSInvoicesForReturn :many
+SELECT
+    si.id,
+    si.branch_id,
+    br.name AS branch_name,
+    si.terminal_id,
+    COALESCE(tm.name, 'POS-01')::TEXT AS terminal_name,
+    si.cashier_user_id,
+    COALESCE(u.full_name, 'Cashier')::TEXT AS cashier_name,
+    si.customer_id,
+    COALESCE(c.name, 'Walk-in Guest')::TEXT AS customer_name,
+    COALESCE(c.phone, '')::TEXT AS customer_phone,
+    si.invoice_number,
+    si.invoice_type,
+    si.status,
+    si.subtotal,
+    si.discount_total,
+    si.tax_total,
+    si.grand_total,
+    si.refunded_total,
+    si.total_cogs,
+    si.order_channel,
+    si.created_at,
+    COALESCE((
+        SELECT ip.payment_method FROM invoice_payments ip
+        WHERE ip.invoice_id = si.id ORDER BY ip.paid_at ASC LIMIT 1
+    ), 'CASH')::TEXT AS payment_method,
+    COALESCE((
+        SELECT SUM(GREATEST(0, sii.qty - sii.returned_qty))
+        FROM sales_invoice_items sii
+        WHERE sii.invoice_id = si.id
+    ), 0)::NUMERIC(19,4) AS returnable_qty_total
+FROM sales_invoices si
+JOIN branches br ON br.id = si.branch_id
+LEFT JOIN terminals tm ON tm.id = si.terminal_id
+LEFT JOIN users u ON u.id = si.cashier_user_id
+LEFT JOIN customers c ON c.id = si.customer_id
+WHERE si.business_id = $1
+  AND si.branch_id = $2
+  AND si.invoice_type = 'SALE'
+  AND (
+      $3::TEXT = ''
+      OR si.invoice_number ILIKE '%' || $3::TEXT || '%'
+      OR COALESCE(c.name, '') ILIKE '%' || $3::TEXT || '%'
+      OR COALESCE(c.phone, '') ILIKE '%' || $3::TEXT || '%'
+      OR EXISTS (
+          SELECT 1
+          FROM sales_invoice_items sii2
+          WHERE sii2.invoice_id = si.id
+            AND sii2.item_meta_json::TEXT ILIKE '%' || $3::TEXT || '%'
+      )
+  )
+ORDER BY si.created_at DESC
+LIMIT 40
+`
+
+type ListRecentPOSInvoicesForReturnParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	BranchID   uuid.UUID `json:"branch_id"`
+	Column3    string    `json:"column_3"`
+}
+
+type ListRecentPOSInvoicesForReturnRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	BranchID           uuid.UUID          `json:"branch_id"`
+	BranchName         string             `json:"branch_name"`
+	TerminalID         uuid.UUID          `json:"terminal_id"`
+	TerminalName       string             `json:"terminal_name"`
+	CashierUserID      uuid.UUID          `json:"cashier_user_id"`
+	CashierName        string             `json:"cashier_name"`
+	CustomerID         uuid.NullUUID      `json:"customer_id"`
+	CustomerName       string             `json:"customer_name"`
+	CustomerPhone      string             `json:"customer_phone"`
+	InvoiceNumber      string             `json:"invoice_number"`
+	InvoiceType        string             `json:"invoice_type"`
+	Status             string             `json:"status"`
+	Subtotal           decimal.Decimal    `json:"subtotal"`
+	DiscountTotal      decimal.Decimal    `json:"discount_total"`
+	TaxTotal           decimal.Decimal    `json:"tax_total"`
+	GrandTotal         decimal.Decimal    `json:"grand_total"`
+	RefundedTotal      decimal.Decimal    `json:"refunded_total"`
+	TotalCogs          decimal.Decimal    `json:"total_cogs"`
+	OrderChannel       string             `json:"order_channel"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	PaymentMethod      string             `json:"payment_method"`
+	ReturnableQtyTotal decimal.Decimal    `json:"returnable_qty_total"`
+}
+
+func (q *Queries) ListRecentPOSInvoicesForReturn(ctx context.Context, arg ListRecentPOSInvoicesForReturnParams) ([]ListRecentPOSInvoicesForReturnRow, error) {
+	rows, err := q.db.Query(ctx, listRecentPOSInvoicesForReturn, arg.BusinessID, arg.BranchID, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentPOSInvoicesForReturnRow{}
+	for rows.Next() {
+		var i ListRecentPOSInvoicesForReturnRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BranchID,
+			&i.BranchName,
+			&i.TerminalID,
+			&i.TerminalName,
+			&i.CashierUserID,
+			&i.CashierName,
+			&i.CustomerID,
+			&i.CustomerName,
+			&i.CustomerPhone,
+			&i.InvoiceNumber,
+			&i.InvoiceType,
+			&i.Status,
+			&i.Subtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.GrandTotal,
+			&i.RefundedTotal,
+			&i.TotalCogs,
+			&i.OrderChannel,
+			&i.CreatedAt,
+			&i.PaymentMethod,
+			&i.ReturnableQtyTotal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSalesInvoiceItems = `-- name: ListSalesInvoiceItems :many
 SELECT
     sii.id, sii.product_id, p.sku, p.name AS product_name, p.image_url,
@@ -589,6 +747,97 @@ func (q *Queries) ListSalesInvoiceItems(ctx context.Context, arg ListSalesInvoic
 			&i.ProductName,
 			&i.ImageUrl,
 			&i.Qty,
+			&i.UnitPrice,
+			&i.DiscountAmount,
+			&i.TaxAmount,
+			&i.LineTotal,
+			&i.BatchCogs,
+			&i.ItemMetaJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSalesInvoiceItemsForReturn = `-- name: ListSalesInvoiceItemsForReturn :many
+SELECT
+    sii.id,
+    sii.invoice_id,
+    sii.product_id,
+    p.sku,
+    p.name AS product_name,
+    p.image_url,
+    p.unit_of_measure,
+    p.enable_serial_tracking,
+    p.allow_fractional_qty,
+    sii.qty,
+    sii.returned_qty,
+    GREATEST(0, sii.qty - sii.returned_qty)::NUMERIC(19,4) AS returnable_qty,
+    sii.unit_price,
+    sii.discount_amount,
+    sii.tax_amount,
+    sii.line_total,
+    sii.batch_cogs,
+    sii.item_meta_json
+FROM sales_invoice_items sii
+JOIN products p ON p.id = sii.product_id
+WHERE sii.business_id = $1 AND sii.invoice_id = $2
+ORDER BY sii.id ASC
+`
+
+type ListSalesInvoiceItemsForReturnParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	InvoiceID  uuid.UUID `json:"invoice_id"`
+}
+
+type ListSalesInvoiceItemsForReturnRow struct {
+	ID                   uuid.UUID       `json:"id"`
+	InvoiceID            uuid.UUID       `json:"invoice_id"`
+	ProductID            uuid.UUID       `json:"product_id"`
+	Sku                  string          `json:"sku"`
+	ProductName          string          `json:"product_name"`
+	ImageUrl             string          `json:"image_url"`
+	UnitOfMeasure        string          `json:"unit_of_measure"`
+	EnableSerialTracking bool            `json:"enable_serial_tracking"`
+	AllowFractionalQty   bool            `json:"allow_fractional_qty"`
+	Qty                  decimal.Decimal `json:"qty"`
+	ReturnedQty          decimal.Decimal `json:"returned_qty"`
+	ReturnableQty        decimal.Decimal `json:"returnable_qty"`
+	UnitPrice            decimal.Decimal `json:"unit_price"`
+	DiscountAmount       decimal.Decimal `json:"discount_amount"`
+	TaxAmount            decimal.Decimal `json:"tax_amount"`
+	LineTotal            decimal.Decimal `json:"line_total"`
+	BatchCogs            decimal.Decimal `json:"batch_cogs"`
+	ItemMetaJson         json.RawMessage `json:"item_meta_json"`
+}
+
+func (q *Queries) ListSalesInvoiceItemsForReturn(ctx context.Context, arg ListSalesInvoiceItemsForReturnParams) ([]ListSalesInvoiceItemsForReturnRow, error) {
+	rows, err := q.db.Query(ctx, listSalesInvoiceItemsForReturn, arg.BusinessID, arg.InvoiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSalesInvoiceItemsForReturnRow{}
+	for rows.Next() {
+		var i ListSalesInvoiceItemsForReturnRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.InvoiceID,
+			&i.ProductID,
+			&i.Sku,
+			&i.ProductName,
+			&i.ImageUrl,
+			&i.UnitOfMeasure,
+			&i.EnableSerialTracking,
+			&i.AllowFractionalQty,
+			&i.Qty,
+			&i.ReturnedQty,
+			&i.ReturnableQty,
 			&i.UnitPrice,
 			&i.DiscountAmount,
 			&i.TaxAmount,
@@ -669,6 +918,46 @@ func (q *Queries) UpdateHeldBillWorkflowStatus(ctx context.Context, arg UpdateHe
 		&i.Status,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const updateInvoiceRefundProgress = `-- name: UpdateInvoiceRefundProgress :one
+UPDATE sales_invoices
+SET
+    refunded_total = refunded_total + $3,
+    status = CASE WHEN $4::BOOLEAN THEN 'REFUND' ELSE status END,
+    override_supervisor_id = COALESCE($5, override_supervisor_id),
+    override_reason = CASE WHEN $6::TEXT <> '' THEN $6::TEXT ELSE override_reason END
+WHERE business_id = $1 AND id = $2
+RETURNING id, status, refunded_total
+`
+
+type UpdateInvoiceRefundProgressParams struct {
+	BusinessID           uuid.UUID       `json:"business_id"`
+	ID                   uuid.UUID       `json:"id"`
+	RefundedTotal        decimal.Decimal `json:"refunded_total"`
+	Column4              bool            `json:"column_4"`
+	OverrideSupervisorID uuid.NullUUID   `json:"override_supervisor_id"`
+	Column6              string          `json:"column_6"`
+}
+
+type UpdateInvoiceRefundProgressRow struct {
+	ID            uuid.UUID       `json:"id"`
+	Status        string          `json:"status"`
+	RefundedTotal decimal.Decimal `json:"refunded_total"`
+}
+
+func (q *Queries) UpdateInvoiceRefundProgress(ctx context.Context, arg UpdateInvoiceRefundProgressParams) (UpdateInvoiceRefundProgressRow, error) {
+	row := q.db.QueryRow(ctx, updateInvoiceRefundProgress,
+		arg.BusinessID,
+		arg.ID,
+		arg.RefundedTotal,
+		arg.Column4,
+		arg.OverrideSupervisorID,
+		arg.Column6,
+	)
+	var i UpdateInvoiceRefundProgressRow
+	err := row.Scan(&i.ID, &i.Status, &i.RefundedTotal)
 	return i, err
 }
 

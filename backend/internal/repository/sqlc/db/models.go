@@ -443,6 +443,7 @@ type SalesInvoice struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	OrderChannel         string             `json:"order_channel"`
 	OrderMetaJson        json.RawMessage    `json:"order_meta_json"`
+	RefundedTotal        decimal.Decimal    `json:"refunded_total"`
 }
 
 type SalesInvoiceItem struct {
@@ -457,6 +458,7 @@ type SalesInvoiceItem struct {
 	LineTotal      decimal.Decimal `json:"line_total"`
 	BatchCogs      decimal.Decimal `json:"batch_cogs"`
 	ItemMetaJson   json.RawMessage `json:"item_meta_json"`
+	ReturnedQty    decimal.Decimal `json:"returned_qty"`
 }
 
 type SalesInvoiceTax struct {
@@ -489,6 +491,37 @@ type SettingDefinition struct {
 	Category     string          `json:"category"`
 	Label        string          `json:"label"`
 	Description  string          `json:"description"`
+}
+
+type StockAdjustment struct {
+	ID               uuid.UUID          `json:"id"`
+	BusinessID       uuid.UUID          `json:"business_id"`
+	BranchID         uuid.UUID          `json:"branch_id"`
+	WarehouseID      uuid.NullUUID      `json:"warehouse_id"`
+	ProductID        uuid.UUID          `json:"product_id"`
+	BatchID          uuid.NullUUID      `json:"batch_id"`
+	SupplierID       uuid.NullUUID      `json:"supplier_id"`
+	InvoiceID        uuid.NullUUID      `json:"invoice_id"`
+	ReturnInvoiceID  uuid.NullUUID      `json:"return_invoice_id"`
+	JournalEntryID   uuid.NullUUID      `json:"journal_entry_id"`
+	AdjustmentNumber string             `json:"adjustment_number"`
+	SourceChannel    string             `json:"source_channel"`
+	AdjustmentType   string             `json:"adjustment_type"`
+	Disposition      string             `json:"disposition"`
+	ResolutionStatus string             `json:"resolution_status"`
+	ReasonCategory   string             `json:"reason_category"`
+	SerialImei       string             `json:"serial_imei"`
+	RmaReference     string             `json:"rma_reference"`
+	Qty              decimal.Decimal    `json:"qty"`
+	UnitCost         decimal.Decimal    `json:"unit_cost"`
+	TotalCost        decimal.Decimal    `json:"total_cost"`
+	RefundAmount     decimal.Decimal    `json:"refund_amount"`
+	Notes            string             `json:"notes"`
+	ActorUserID      uuid.NullUUID      `json:"actor_user_id"`
+	ActorName        string             `json:"actor_name"`
+	ResolvedBy       uuid.NullUUID      `json:"resolved_by"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type StockLedgerEntry struct {

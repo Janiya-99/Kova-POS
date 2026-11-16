@@ -119,15 +119,29 @@ func (u *InventoryFIFOUsecase) ListBatchesAndGRNs(ctx context.Context, businessI
 		BusinessID: businessID,
 		BranchID:   branchID,
 	})
+	adjBranch := branchID
+	if multiBranch {
+		adjBranch = uuid.Nil
+	}
+	adjustments, _ := u.queries.ListStockAdjustmentsForBusiness(ctx, db.ListStockAdjustmentsForBusinessParams{
+		BusinessID: businessID,
+		Column2:    adjBranch,
+	})
+	adjSummary, _ := u.queries.GetStockAdjustmentsSummary(ctx, db.GetStockAdjustmentsSummaryParams{
+		BusinessID: businessID,
+		Column2:    adjBranch,
+	})
 	return map[string]any{
-		"batches":           batches,
-		"grns":              grns,
-		"suppliers":         suppliers,
-		"approval_logs":     approvalLogs,
-		"warehouses":        warehouses,
-		"purchase_orders":   pos,
-		"purchase_invoices": invoices,
-		"low_stock_items":   lowStock,
+		"batches":            batches,
+		"grns":               grns,
+		"suppliers":          suppliers,
+		"approval_logs":      approvalLogs,
+		"warehouses":         warehouses,
+		"purchase_orders":    pos,
+		"purchase_invoices":  invoices,
+		"low_stock_items":    lowStock,
+		"adjustments":        adjustments,
+		"adjustment_summary": adjSummary,
 	}, nil
 }
 

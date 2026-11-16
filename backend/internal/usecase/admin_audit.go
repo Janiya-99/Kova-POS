@@ -576,6 +576,7 @@ func (u *AdminAuditUsecase) CreateCompany(ctx context.Context, actor domain.Plat
 		{"4000", "Sales Revenue", "REVENUE"},
 		{"4100", "Sales Returns & Allowances", "REVENUE"},
 		{"5000", "Cost of Goods Sold", "COGS"},
+		{"5100", "Inventory Shrinkage, Damage & Wastage", "EXPENSE"},
 	}
 	for _, coa := range coaSeeds {
 		if _, err := tx.Exec(ctx, `

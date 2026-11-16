@@ -203,7 +203,7 @@ func wipeAllLegacyTenants(ctx context.Context, masterPool *pgxpool.Pool) error {
 	}
 
 	cleanupSQL := []string{
-		`TRUNCATE TABLE audit_logs, platform_companies, password_reset_tokens, user_sessions, system_notifications, warehouse_approval_logs, journal_lines, journal_entries, fiscal_periods, invoice_payments, sales_invoice_taxes, sales_invoice_items, sales_invoices, suspended_bill_items, suspended_bills, pos_shifts, stock_ledger_entries, stock_movements, inventory_batches, grn_items, goods_received_notes, purchase_invoices, purchase_order_items, purchase_orders, product_barcodes, products, categories, tax_rules, tax_groups, suppliers, customers, scoped_settings, print_templates, user_business_roles, designations, departments, terminals, warehouses, branches, chart_of_accounts, businesses, users RESTART IDENTITY CASCADE`,
+		`TRUNCATE TABLE audit_logs, platform_companies, password_reset_tokens, user_sessions, system_notifications, warehouse_approval_logs, stock_adjustments, journal_lines, journal_entries, fiscal_periods, invoice_payments, sales_invoice_taxes, sales_invoice_items, sales_invoices, suspended_bill_items, suspended_bills, pos_shifts, stock_ledger_entries, stock_movements, inventory_batches, grn_items, goods_received_notes, purchase_invoices, purchase_order_items, purchase_orders, product_barcodes, products, categories, tax_rules, tax_groups, suppliers, customers, scoped_settings, print_templates, user_business_roles, designations, departments, terminals, warehouses, branches, chart_of_accounts, businesses, users RESTART IDENTITY CASCADE`,
 	}
 	for _, stmt := range cleanupSQL {
 		if _, err := masterPool.Exec(ctx, stmt); err != nil {
@@ -1180,6 +1180,70 @@ func seedRichMobileStoreData(
 			INSERT INTO suspended_bill_items (business_id, suspended_bill_id, product_id, qty, unit_price, discount_percent)
 			VALUES ($1, $2, $3, 1, $4, 0)
 		`, bizID, hbID, prod.ID, price)
+	}
+
+	// 6 Realistic Mobile Returns, DOA Quarantine, Transit Damage & E-Waste Wastages in 2026
+	adjSamples := []struct {
+		docNum, src, adjType, disp, resStatus, reason, imei, rma, notes string
+		prodIdx, daysAgo                                                int
+		qty                                                             int64
+	}{
+		{"RET-2026-9001", "POS_RETURN", "CUSTOMER_RETURN", "QUARANTINE_DAMAGED", "QUARANTINE", "DOA / Factory Hardware Defect", "358492104829104", "", "Touchscreen digitizer unresponsive out of box; awaiting AppleCare inspection", 0, 6, 1},
+		{"RET-2026-9002", "POS_RETURN", "CUSTOMER_RETURN", "RESTOCK_SELLABLE", "COMPLETED", "Unopened Box Exchange", "359281746201938", "", "Customer upgraded storage tier before opening factory seal", 4, 4, 1},
+		{"DMG-2026-9003", "INVENTORY", "DAMAGE", "WRITE_OFF_SCRAP", "SCRAPPED", "DOA / Transit Screen Crack", "357102938475612", "", "Outer courier carton crushed during inter-branch transfer", 6, 3, 1},
+		{"WST-2026-9004", "INVENTORY", "WASTAGE", "WRITE_OFF_SCRAP", "SCRAPPED", "Battery Swell / E-Waste Write-Off", "", "", "Demo counter unit battery swelling safely recycled via CEA e-waste drop", 21, 2, 1},
+		{"RMA-2026-9005", "INVENTORY", "SUPPLIER_RETURN", "RETURN_TO_SUPPLIER", "RMA_SENT", "RMA Return to Authorized Distributor", "356910293847102", "RMA-OPP-2026-14", "Returning sealed factory batch display flicker to OPPO Lanka Distributor", 5, 1, 1},
+	}
+	for idx, as := range adjSamples {
+		pr := products[as.prodIdx%len(products)]
+		brID := branches[idx%len(branches)]
+		cost := decimal.NewFromFloat(pr.Meta.CostPrice).Round(4)
+		refund := decimal.Zero
+		if as.src == "POS_RETURN" {
+			refund = decimal.NewFromFloat(pr.Meta.SalePrice).Round(4)
+		}
+		var whID uuid.UUID
+		_ = finTx.QueryRow(ctx, `SELECT id FROM warehouses WHERE business_id = $1 AND branch_id = $2 LIMIT 1`, bizID, brID).Scan(&whID)
+		var bID uuid.UUID
+		_ = finTx.QueryRow(ctx, `SELECT id FROM inventory_batches WHERE business_id = $1 AND product_id = $2 ORDER BY created_at DESC LIMIT 1`, bizID, pr.ID).Scan(&bID)
+
+		var jeID uuid.UUID
+		if coa["1200"] != uuid.Nil && (coa["5100"] != uuid.Nil || coa["5000"] != uuid.Nil) && coa["2000"] != uuid.Nil {
+			debitAcct := coa["5100"]
+			if debitAcct == uuid.Nil {
+				debitAcct = coa["5000"]
+			}
+			if as.disp == "RETURN_TO_SUPPLIER" {
+				debitAcct = coa["2000"]
+			}
+			if err := finTx.QueryRow(ctx, `
+				INSERT INTO journal_entries (business_id, branch_id, entry_number, source_type, source_id, description, entry_date, posted_by)
+				VALUES ($1, $2, $3, 'STOCK_ADJUSTMENT', $4, $5, CURRENT_DATE - $6::INT, $7)
+				RETURNING id
+			`, bizID, brID, fmt.Sprintf("JE-ADJ-%04d", idx+1), pr.ID, fmt.Sprintf("%s %s (%s)", as.docNum, as.adjType, as.reason), as.daysAgo, ownerUserID).Scan(&jeID); err == nil {
+				_, _ = finTx.Exec(ctx, `
+					INSERT INTO journal_lines (business_id, journal_entry_id, account_id, debit, credit, memo)
+					VALUES
+						($1, $2, $3, $4, 0, $5),
+						($1, $2, $6, 0, $4, 'FIFO batch adjustment credit')
+				`, bizID, jeID, debitAcct, cost, as.reason, coa["1200"])
+			}
+		}
+
+		_, _ = finTx.Exec(ctx, `
+			INSERT INTO stock_adjustments (
+				business_id, branch_id, warehouse_id, product_id, batch_id, supplier_id, journal_entry_id,
+				adjustment_number, source_channel, adjustment_type, disposition, resolution_status,
+				reason_category, serial_imei, rma_reference, qty, unit_cost, total_cost, refund_amount,
+				notes, actor_user_id, actor_name, created_at
+			) VALUES (
+				$1, $2, NULLIF($3::TEXT,'')::UUID, $4, NULLIF($5::TEXT,'')::UUID, $6, NULLIF($7::TEXT,'')::UUID,
+				$8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, 'Kavinda Perera', NOW() - ($22::TEXT || ' days')::INTERVAL
+			)
+		`, bizID, brID, whID.String(), pr.ID, bID.String(), supplierIDs[0], jeID.String(),
+			as.docNum, as.src, as.adjType, as.disp, as.resStatus,
+			as.reason, as.imei, as.rma, decimal.NewFromInt(as.qty), cost, cost, refund,
+			as.notes, ownerUserID, fmt.Sprintf("%d", as.daysAgo))
 	}
 
 	// Realistic Mobile Alerts & Low-Stock Auto-PO Notifications

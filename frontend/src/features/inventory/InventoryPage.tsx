@@ -14,6 +14,12 @@ import {
   Printer,
   Pencil,
   Warehouse,
+  RotateCcw,
+  AlertTriangle,
+  ShieldAlert,
+  Wrench,
+  Truck,
+  Flame,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -48,12 +54,16 @@ import {
   useSortableData,
 } from '@/components/ui/data-table-pagination';
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
-import { TactileButton } from '@/components/dqnamo/TactileButton';
 import { InventorySkeleton } from '@/components/skeletons/InventorySkeleton';
 import { CreateGRNDrawer, type EditableGRNDetail } from './CreateGRNDrawer';
 import { ProductManagementDrawer } from './ProductManagementDrawer';
+import { StockAdjustmentDrawer } from './StockAdjustmentDrawer';
 import { Can } from '@/features/auth/Can';
 import { apiFetch } from '@/lib/api';
+import {
+  getIndustryReturnAndWastagePresets,
+  resolveEffectiveIndustryProfile,
+} from '@/lib/branchAccess';
 import { formatDisplayLabel } from '@/lib/formatLabel';
 import { useAuthStore } from '@/store/authStore';
 import { useCurrency } from '@/hooks/useCurrency';
@@ -64,6 +74,7 @@ import type { POSBootstrapResponse } from '../pos/types';
 
 interface InventoryBatchDTO {
   id: string;
+  product_id?: string;
   sku: string;
   product_name: string;
   batch_number: string;
@@ -72,6 +83,51 @@ interface InventoryBatchDTO {
   unit_cost: string | number;
   initial_qty: string | number;
   remaining_qty: string | number;
+}
+
+interface StockAdjustmentDTO {
+  id: string;
+  branch_id: string;
+  branch_name: string;
+  product_id: string;
+  sku: string;
+  product_name: string;
+  unit_of_measure: string;
+  batch_number: string;
+  supplier_name: string;
+  invoice_number: string;
+  return_invoice_number: string;
+  journal_entry_number: string;
+  adjustment_number: string;
+  source_channel: string;
+  adjustment_type: string;
+  disposition: string;
+  resolution_status: string;
+  reason_category: string;
+  serial_imei: string;
+  rma_reference: string;
+  qty: string | number;
+  unit_cost: string | number;
+  total_cost: string | number;
+  refund_amount: string | number;
+  notes: string;
+  actor_name: string;
+  resolved_by_name: string;
+  created_at: string;
+}
+
+interface StockAdjustmentSummaryDTO {
+  customer_return_count: number;
+  customer_return_refund: string | number;
+  customer_return_cost: string | number;
+  damage_count: number;
+  damage_cost: string | number;
+  wastage_count: number;
+  wastage_cost: string | number;
+  supplier_return_count: number;
+  supplier_return_cost: string | number;
+  quarantine_count: number;
+  quarantine_cost: string | number;
 }
 
 interface GRNRecordDTO {
@@ -101,6 +157,8 @@ interface InventoryResponse {
   grns: GRNRecordDTO[];
   suppliers: Array<{ id: string; code: string; name: string }>;
   approval_logs?: ApprovalLogDTO[];
+  adjustments?: StockAdjustmentDTO[];
+  adjustment_summary?: StockAdjustmentSummaryDTO;
 }
 
 interface GRNVoucherDetail {
@@ -252,8 +310,15 @@ function printGRNVoucherHtml(
 
 export function InventoryPage() {
   const queryClient = useQueryClient();
-  const { context, branches, warehouses, activeWarehouseId } = useAuthStore();
+  const { context, branches, warehouses, activeWarehouseId, resolvedSettings, businesses } =
+    useAuthStore();
   const { formatMoney } = useCurrency();
+  const industryProfile = resolveEffectiveIndustryProfile(context, resolvedSettings, businesses);
+  const returnPresets = React.useMemo(
+    () => getIndustryReturnAndWastagePresets(industryProfile),
+    [industryProfile]
+  );
+
   const [grnOpen, setGrnOpen] = React.useState(false);
   const [editGrnData, setEditGrnData] = React.useState<EditableGRNDetail | null>(null);
   const [voucherDetail, setVoucherDetail] = React.useState<GRNVoucherDetail | null>(null);
@@ -261,6 +326,12 @@ export function InventoryPage() {
   const [loadingGrnId, setLoadingGrnId] = React.useState<string | null>(null);
   const [productDrawerOpen, setProductDrawerOpen] = React.useState(false);
   const [editingProduct, setEditingProduct] = React.useState<LocalProduct | null>(null);
+  const [adjDrawerOpen, setAdjDrawerOpen] = React.useState(false);
+  const [adjFilter, setAdjFilter] = React.useState<
+    'ALL' | 'CUSTOMER_RETURN' | 'DAMAGE' | 'WASTAGE' | 'SUPPLIER_RETURN' | 'QUARANTINE'
+  >('ALL');
+  const [adjSearch, setAdjSearch] = React.useState('');
+  const [resolvingAdjId, setResolvingAdjId] = React.useState<string | null>(null);
   const [catalogSearch, setCatalogSearch] = React.useState('');
   const [selectedCategory, setSelectedCategory] = React.useState('ALL');
   const [selectedBrand, setSelectedBrand] = React.useState('ALL');
@@ -401,6 +472,55 @@ export function InventoryPage() {
   const batchPagination = usePagination(batchSort.sortedItems, 10);
   const grnPagination = usePagination(grnSort.sortedItems, 10);
 
+  const filteredAdjustments = React.useMemo(() => {
+    const list = data?.adjustments || [];
+    const q = adjSearch.trim().toLowerCase();
+    return list.filter((a) => {
+      if (adjFilter === 'CUSTOMER_RETURN' && a.adjustment_type !== 'CUSTOMER_RETURN') return false;
+      if (
+        adjFilter === 'DAMAGE' &&
+        a.adjustment_type !== 'DAMAGE' &&
+        !(a.adjustment_type === 'CUSTOMER_RETURN' && a.disposition === 'QUARANTINE_DAMAGED')
+      )
+        return false;
+      if (
+        adjFilter === 'WASTAGE' &&
+        a.adjustment_type !== 'WASTAGE' &&
+        a.adjustment_type !== 'EXPIRY_WRITEOFF' &&
+        !(a.adjustment_type === 'CUSTOMER_RETURN' && a.disposition === 'WRITE_OFF_SCRAP')
+      )
+        return false;
+      if (
+        adjFilter === 'SUPPLIER_RETURN' &&
+        a.adjustment_type !== 'SUPPLIER_RETURN' &&
+        a.resolution_status !== 'RMA_SENT'
+      )
+        return false;
+      if (adjFilter === 'QUARANTINE' && a.resolution_status !== 'QUARANTINE') return false;
+      if (!q) return true;
+      return (
+        a.adjustment_number.toLowerCase().includes(q) ||
+        a.product_name.toLowerCase().includes(q) ||
+        a.sku.toLowerCase().includes(q) ||
+        a.reason_category.toLowerCase().includes(q) ||
+        (a.serial_imei || '').toLowerCase().includes(q) ||
+        (a.invoice_number || '').toLowerCase().includes(q)
+      );
+    });
+  }, [data?.adjustments, adjFilter, adjSearch]);
+
+  const adjSort = useSortableData(
+    filteredAdjustments,
+    { key: 'created_at', dir: 'desc' },
+    (a, key) => {
+      if (key === 'qty' || key === 'total_cost' || key === 'refund_amount') {
+        return Number((a as Record<string, any>)[key] || 0);
+      }
+      return (a as Record<string, any>)[key];
+    }
+  );
+  const adjPagination = usePagination(adjSort.sortedItems, 10);
+
   if (isLoading || !data) {
     return <InventorySkeleton />;
   }
@@ -415,6 +535,57 @@ export function InventoryPage() {
   );
   const draftCount = data.grns.filter((g) => g.status === 'DRAFT').length;
   const approvalLogs = data.approval_logs || [];
+  const adjSummary = data.adjustment_summary || {
+    customer_return_count: 0,
+    customer_return_refund: 0,
+    customer_return_cost: 0,
+    damage_count: 0,
+    damage_cost: 0,
+    wastage_count: 0,
+    wastage_cost: 0,
+    supplier_return_count: 0,
+    supplier_return_cost: 0,
+    quarantine_count: 0,
+    quarantine_cost: 0,
+  };
+
+  const handleResolveQuarantine = async (
+    adj: StockAdjustmentDTO,
+    action: 'RMA_SENT' | 'SCRAPPED' | 'REPAIRED_RESTOCKED'
+  ) => {
+    const labelMap = {
+      RMA_SENT: 'Dispatch to Supplier RMA & Claim Credit',
+      SCRAPPED: 'Permanently Write Off as Scrap / E-Waste',
+      REPAIRED_RESTOCKED: 'Repair Complete & Restock into Sellable FIFO',
+    };
+    const ok = await confirmAction({
+      title: labelMap[action],
+      text: `${adj.adjustment_number} — ${adj.product_name} (${Number(adj.qty)} ${
+        adj.unit_of_measure
+      }). Double-entry GL will be updated atomically.`,
+      confirmLabel: 'Confirm Action',
+    });
+    if (!ok) return;
+    setResolvingAdjId(adj.id);
+    try {
+      await apiFetch(`/api/v1/inventory/adjustments/${adj.id}/resolve`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          action,
+          supplier_id: data.suppliers[0]?.id,
+          notes: `Resolved from Inventory QA (${action})`,
+        }),
+      });
+      toast.success(`${adj.adjustment_number} updated to ${formatDisplayLabel(action)}`);
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['accounting'] });
+      queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to resolve quarantine item');
+    } finally {
+      setResolvingAdjId(null);
+    }
+  };
 
   const handleViewGRN = async (grnId: string, triggerPrint = false) => {
     setLoadingGrnId(grnId);
@@ -544,6 +715,15 @@ export function InventoryPage() {
                     </Badge>
                   )}
                 </TabsTrigger>
+                <TabsTrigger value="returns_wastage" data-testid="inventory-returns-tab">
+                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                  <span>{returnPresets.inventoryTabLabel}</span>
+                  {adjSummary.quarantine_count > 0 && (
+                    <Badge variant="negative" className="ml-1.5 px-1.5 py-0 text-[9.5px]">
+                      {adjSummary.quarantine_count} QA
+                    </Badge>
+                  )}
+                </TabsTrigger>
               </TabsList>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -553,6 +733,18 @@ export function InventoryPage() {
                     {activeBranchName} • {activeWarehouse.name}
                   </span>
                 )}
+                <Can permission="inventory:adjust">
+                  <Button
+                    type="button"
+                    variant="warning"
+                    size="sm"
+                    onClick={() => setAdjDrawerOpen(true)}
+                    data-testid="record-damage-wastage-btn"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    {returnPresets.inventoryActionLabel}
+                  </Button>
+                </Can>
                 <Can permission="catalog:manage">
                   <DynamicButton
                     variant="lavender"
@@ -1322,6 +1514,337 @@ export function InventoryPage() {
                 </div>
               )}
             </TabsContent>
+
+            {/* TAB 4: Industry-Aware Returns, Damages, Wastage & Supplier RMA */}
+            <TabsContent value="returns_wastage" className="space-y-4">
+              {/* 4-Card Summary Row */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/60 p-4 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-ink-muted uppercase">
+                    <span>Customer Returns</span>
+                    <RotateCcw className="h-3.5 w-3.5 text-accent" />
+                  </div>
+                  <p className="mt-1.5 text-lg font-extrabold text-ink tabular-nums">
+                    {formatMoney(adjSummary.customer_return_refund)}
+                  </p>
+                  <span className="mt-0.5 text-[11px] text-ink-muted">
+                    {adjSummary.customer_return_count} POS return entries
+                  </span>
+                </div>
+
+                <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/60 p-4 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-ink-muted uppercase">
+                    <span>Damaged / Quarantine</span>
+                    <ShieldAlert className="h-3.5 w-3.5 text-[#EF4444]" />
+                  </div>
+                  <p className="mt-1.5 text-lg font-extrabold text-ink tabular-nums">
+                    {formatMoney(adjSummary.damage_cost)}
+                  </p>
+                  <span className="mt-0.5 text-[11px] font-semibold text-[#EF4444]">
+                    {adjSummary.damage_count} damaged • {adjSummary.quarantine_count} awaiting QA
+                  </span>
+                </div>
+
+                <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/60 p-4 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-ink-muted uppercase">
+                    <span>Wastage &amp; Expiry Loss</span>
+                    <Flame className="h-3.5 w-3.5 text-[#F59E0B]" />
+                  </div>
+                  <p className="mt-1.5 text-lg font-extrabold text-ink tabular-nums">
+                    {formatMoney(adjSummary.wastage_cost)}
+                  </p>
+                  <span className="mt-0.5 text-[11px] text-ink-muted">
+                    {adjSummary.wastage_count} spoilage / write-off events
+                  </span>
+                </div>
+
+                <div className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted/60 p-4 flex flex-col justify-between">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-ink-muted uppercase">
+                    <span>Supplier RMA / RTV</span>
+                    <Truck className="h-3.5 w-3.5 text-accent" />
+                  </div>
+                  <p className="mt-1.5 text-lg font-extrabold text-ink tabular-nums">
+                    {formatMoney(adjSummary.supplier_return_cost)}
+                  </p>
+                  <span className="mt-0.5 text-[11px] text-ink-muted">
+                    {adjSummary.supplier_return_count} vendor claims posted
+                  </span>
+                </div>
+              </div>
+
+              {/* Filter Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { id: 'ALL', label: `All (${(data.adjustments || []).length})` },
+                      { id: 'CUSTOMER_RETURN', label: 'Customer Returns' },
+                      { id: 'DAMAGE', label: 'Damaged' },
+                      { id: 'WASTAGE', label: 'Wastage / Expiry' },
+                      { id: 'SUPPLIER_RETURN', label: 'Supplier RMA' },
+                      { id: 'QUARANTINE', label: `Quarantine QA (${adjSummary.quarantine_count})` },
+                    ] as const
+                  ).map((pill) => (
+                    <button
+                      key={pill.id}
+                      type="button"
+                      onClick={() => setAdjFilter(pill.id)}
+                      data-testid={`adj-filter-${pill.id.toLowerCase()}`}
+                      className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all cursor-pointer ${
+                        adjFilter === pill.id
+                          ? 'bg-accent text-accent-fg shadow-xs'
+                          : 'bg-surface-muted/80 text-ink-muted hover:text-ink border border-border-theme'
+                      }`}
+                    >
+                      {pill.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative w-56">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
+                    <Input
+                      value={adjSearch}
+                      onChange={(e) => setAdjSearch(e.target.value)}
+                      placeholder="Search doc #, SKU, reason or IMEI..."
+                      className="h-8 pl-8 text-xs"
+                    />
+                  </div>
+                  <Can permission="inventory:adjust">
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="xs"
+                      onClick={() => setAdjDrawerOpen(true)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      New Entry
+                    </Button>
+                  </Can>
+                </div>
+              </div>
+
+              {/* Desktop Ledger Table */}
+              <div className="hidden md:block">
+                <Table
+                  data-testid="inventory-adjustments-table"
+                  containerClassName="max-h-[calc(100vh-360px)] overflow-y-auto"
+                >
+                  <TableHeader>
+                    <TableRow>
+                      <SortableTableHead
+                        sortKey="adjustment_number"
+                        activeSortKey={adjSort.sortConfig?.key}
+                        sortDir={adjSort.sortConfig?.dir}
+                        onSort={adjSort.requestSort}
+                      >
+                        Doc #
+                      </SortableTableHead>
+                      <SortableTableHead
+                        sortKey="product_name"
+                        activeSortKey={adjSort.sortConfig?.key}
+                        sortDir={adjSort.sortConfig?.dir}
+                        onSort={adjSort.requestSort}
+                      >
+                        Product / Serial
+                      </SortableTableHead>
+                      <TableHead>Classification &amp; Reason</TableHead>
+                      <TableHead>Disposition / QA Status</TableHead>
+                      <SortableTableHead
+                        sortKey="qty"
+                        activeSortKey={adjSort.sortConfig?.key}
+                        sortDir={adjSort.sortConfig?.dir}
+                        onSort={adjSort.requestSort}
+                        align="right"
+                      >
+                        Qty
+                      </SortableTableHead>
+                      <SortableTableHead
+                        sortKey="total_cost"
+                        activeSortKey={adjSort.sortConfig?.key}
+                        sortDir={adjSort.sortConfig?.dir}
+                        onSort={adjSort.requestSort}
+                        align="right"
+                      >
+                        Cost / Refund
+                      </SortableTableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {adjPagination.pagedItems.map((adj) => (
+                      <TableRow key={adj.id} data-testid={`adj-row-${adj.adjustment_number}`}>
+                        <TableCell>
+                          <p className="font-mono text-xs font-extrabold text-ink">
+                            {adj.adjustment_number}
+                          </p>
+                          <p className="text-[10.5px] text-ink-muted">
+                            {adj.branch_name} • {new Date(adj.created_at).toLocaleDateString()}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          <p className="font-semibold text-ink">{adj.product_name}</p>
+                          <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                            <span className="text-[10.5px] font-mono text-ink-muted">{adj.sku}</span>
+                            {adj.serial_imei && (
+                              <Badge variant="lavender" className="text-[9.5px] font-mono px-1.5 py-0">
+                                {adj.serial_imei}
+                              </Badge>
+                            )}
+                            {adj.invoice_number && (
+                              <Badge variant="outline" className="text-[9.5px] px-1.5 py-0">
+                                Inv {adj.invoice_number}
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              adj.adjustment_type === 'CUSTOMER_RETURN'
+                                ? 'lavender'
+                                : adj.adjustment_type === 'DAMAGE'
+                                ? 'negative'
+                                : adj.adjustment_type === 'SUPPLIER_RETURN'
+                                ? 'positive'
+                                : 'accent'
+                            }
+                          >
+                            {formatDisplayLabel(adj.adjustment_type)}
+                          </Badge>
+                          <p className="mt-1 text-xs font-semibold text-ink">{adj.reason_category}</p>
+                          {adj.notes && (
+                            <p className="text-[10.5px] text-ink-muted line-clamp-1">{adj.notes}</p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              adj.resolution_status === 'QUARANTINE'
+                                ? 'negative'
+                                : adj.resolution_status === 'REPAIRED_RESTOCKED'
+                                ? 'positive'
+                                : adj.resolution_status === 'RMA_SENT'
+                                ? 'lavender'
+                                : 'outline'
+                            }
+                          >
+                            {formatDisplayLabel(adj.resolution_status)}
+                          </Badge>
+                          <p className="mt-0.5 text-[10.5px] text-ink-muted">
+                            {formatDisplayLabel(adj.disposition)}
+                          </p>
+                        </TableCell>
+                        <TableCell className="text-right font-bold tabular-nums">
+                          {Number(adj.qty)} {adj.unit_of_measure}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <p className="font-bold text-ink">{formatMoney(adj.total_cost)}</p>
+                          {Number(adj.refund_amount || 0) > 0 && (
+                            <p className="text-[10.5px] font-semibold text-[#EF4444]">
+                              Refund {formatMoney(adj.refund_amount)}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right whitespace-nowrap">
+                          {adj.resolution_status === 'QUARANTINE' ? (
+                            <Can permission="inventory:adjust">
+                              <div className="inline-flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="lavender"
+                                  size="xs"
+                                  disabled={resolvingAdjId === adj.id}
+                                  onClick={() => void handleResolveQuarantine(adj, 'RMA_SENT')}
+                                >
+                                  <Truck className="h-3 w-3" />
+                                  RMA
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="success"
+                                  size="xs"
+                                  disabled={resolvingAdjId === adj.id}
+                                  onClick={() =>
+                                    void handleResolveQuarantine(adj, 'REPAIRED_RESTOCKED')
+                                  }
+                                >
+                                  <Wrench className="h-3 w-3" />
+                                  Restock
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="xs"
+                                  disabled={resolvingAdjId === adj.id}
+                                  onClick={() => void handleResolveQuarantine(adj, 'SCRAPPED')}
+                                >
+                                  Scrap
+                                </Button>
+                              </div>
+                            </Can>
+                          ) : (
+                            <span className="font-mono text-[10.5px] text-ink-muted">
+                              {adj.journal_entry_number || 'GL Posted'}
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {adjPagination.pagedItems.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-xs text-ink-muted">
+                          No return, damage, or wastage entries match the active filter.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile Ledger Cards */}
+              <div className="grid grid-cols-1 gap-3 md:hidden">
+                {adjPagination.pagedItems.map((adj) => (
+                  <div
+                    key={adj.id}
+                    className="rounded-[var(--theme-radius-inner)] border border-border-theme bg-surface-muted p-4 space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-mono text-xs font-extrabold text-ink">
+                          {adj.adjustment_number}
+                        </p>
+                        <p className="text-xs font-bold text-ink">{adj.product_name}</p>
+                        <p className="text-[11px] text-ink-muted">{adj.reason_category}</p>
+                      </div>
+                      <Badge
+                        variant={adj.resolution_status === 'QUARANTINE' ? 'negative' : 'lavender'}
+                      >
+                        {formatDisplayLabel(adj.resolution_status)}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between text-xs tabular-nums">
+                      <span>
+                        Qty: {Number(adj.qty)} {adj.unit_of_measure}
+                      </span>
+                      <span className="font-bold">{formatMoney(adj.total_cost)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <DataTablePagination
+                page={adjPagination.page}
+                pageSize={adjPagination.pageSize}
+                totalItems={adjPagination.totalItems}
+                totalPages={adjPagination.totalPages}
+                onPageChange={adjPagination.setPage}
+                onPageSizeChange={adjPagination.setPageSize}
+                itemLabel="adjustments"
+                testIdPrefix="inv-adj-pagination"
+              />
+            </TabsContent>
           </Tabs>
         </section>
       </div>
@@ -1550,6 +2073,22 @@ export function InventoryPage() {
           refetch();
           queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
           queryClient.invalidateQueries({ queryKey: ['overview'] });
+        }}
+      />
+
+      <StockAdjustmentDrawer
+        open={adjDrawerOpen}
+        onOpenChange={setAdjDrawerOpen}
+        products={products}
+        batches={data.batches}
+        suppliers={data.suppliers}
+        onSaved={() => {
+          refetch();
+          refetchBootstrap();
+          queryClient.invalidateQueries({ queryKey: ['accounting'] });
+          queryClient.invalidateQueries({ queryKey: ['overview'] });
+          queryClient.invalidateQueries({ queryKey: ['pos-bootstrap'] });
+          queryClient.invalidateQueries({ queryKey: ['reports'] });
         }}
       />
     </>

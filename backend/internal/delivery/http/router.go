@@ -306,7 +306,9 @@ func RegisterRoutes(app *fiber.App, h *Handler, masterAuth *usecase.AuthUsecase,
 
 	// POS Terminal & Held Bills
 	protected.Get("/pos/bootstrap", middleware.RequirePermission(masterAuth, "pos:view"), h.BootstrapPOS)
+	protected.Get("/pos/invoices", middleware.RequirePermission(masterAuth, "pos:view"), h.ListPOSInvoicesForReturn)
 	protected.Post("/pos/checkout", posBurstLimiter, middleware.RequirePermission(masterAuth, "pos:checkout"), h.POSCheckout)
+	protected.Post("/pos/returns", middleware.RequirePermission(masterAuth, "pos:refund"), h.ProcessPOSReturn)
 	protected.Post("/pos/invoices/:id/void", middleware.RequirePermission(masterAuth, "pos:void_bill"), h.VoidInvoice)
 	protected.Post("/pos/invoices/:id/refund", middleware.RequirePermission(masterAuth, "pos:refund"), h.RefundInvoice)
 	protected.Get("/pos/held-bills", middleware.RequirePermission(masterAuth, "pos:hold_bill"), h.ListHeldBills)
@@ -320,6 +322,9 @@ func RegisterRoutes(app *fiber.App, h *Handler, masterAuth *usecase.AuthUsecase,
 	protected.Put("/suppliers/:id", middleware.RequirePermission(masterAuth, "inventory:grn_create"), h.UpdateSupplier)
 	protected.Delete("/suppliers/:id", middleware.RequirePermission(masterAuth, "inventory:grn_create"), h.DeleteSupplier)
 	protected.Get("/inventory", middleware.RequirePermission(masterAuth, "inventory:view"), h.ListInventory)
+	protected.Get("/inventory/adjustments", middleware.RequirePermission(masterAuth, "inventory:view"), h.ListStockAdjustments)
+	protected.Post("/inventory/adjustments", middleware.RequirePermission(masterAuth, "inventory:adjust"), h.CreateStockAdjustment)
+	protected.Patch("/inventory/adjustments/:id/resolve", middleware.RequirePermission(masterAuth, "inventory:adjust"), h.ResolveStockAdjustment)
 	protected.Get("/inventory/grns/:id", middleware.RequirePermission(masterAuth, "inventory:view"), h.GetGRNDetail)
 	protected.Post("/inventory/grns", middleware.RequirePermission(masterAuth, "inventory:grn_create"), h.CreateGRN)
 	protected.Put("/inventory/grns/:id", middleware.RequirePermission(masterAuth, "inventory:grn_create"), h.UpdateGRN)

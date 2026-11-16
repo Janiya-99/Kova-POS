@@ -103,6 +103,31 @@ func (q *Queries) GetDefaultSupplierForBusiness(ctx context.Context, businessID 
 	return i, err
 }
 
+const getDefaultWarehouseForBranch = `-- name: GetDefaultWarehouseForBranch :one
+SELECT id, name
+FROM warehouses
+WHERE business_id = $1 AND branch_id = $2
+ORDER BY created_at ASC
+LIMIT 1
+`
+
+type GetDefaultWarehouseForBranchParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	BranchID   uuid.UUID `json:"branch_id"`
+}
+
+type GetDefaultWarehouseForBranchRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+func (q *Queries) GetDefaultWarehouseForBranch(ctx context.Context, arg GetDefaultWarehouseForBranchParams) (GetDefaultWarehouseForBranchRow, error) {
+	row := q.db.QueryRow(ctx, getDefaultWarehouseForBranch, arg.BusinessID, arg.BranchID)
+	var i GetDefaultWarehouseForBranchRow
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
+}
+
 const getGRNDetail = `-- name: GetGRNDetail :one
 SELECT
     g.id, g.business_id, g.branch_id, br.name AS branch_name, br.code AS branch_code,
@@ -225,6 +250,45 @@ func (q *Queries) GetGRNForUpdate(ctx context.Context, arg GetGRNForUpdateParams
 	return i, err
 }
 
+const getInventoryBatchForUpdate = `-- name: GetInventoryBatchForUpdate :one
+SELECT id, business_id, branch_id, product_id, batch_number, unit_cost, initial_qty, remaining_qty
+FROM inventory_batches
+WHERE business_id = $1 AND id = $2
+FOR UPDATE
+`
+
+type GetInventoryBatchForUpdateParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+type GetInventoryBatchForUpdateRow struct {
+	ID           uuid.UUID       `json:"id"`
+	BusinessID   uuid.UUID       `json:"business_id"`
+	BranchID     uuid.UUID       `json:"branch_id"`
+	ProductID    uuid.UUID       `json:"product_id"`
+	BatchNumber  string          `json:"batch_number"`
+	UnitCost     decimal.Decimal `json:"unit_cost"`
+	InitialQty   decimal.Decimal `json:"initial_qty"`
+	RemainingQty decimal.Decimal `json:"remaining_qty"`
+}
+
+func (q *Queries) GetInventoryBatchForUpdate(ctx context.Context, arg GetInventoryBatchForUpdateParams) (GetInventoryBatchForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getInventoryBatchForUpdate, arg.BusinessID, arg.ID)
+	var i GetInventoryBatchForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.BranchID,
+		&i.ProductID,
+		&i.BatchNumber,
+		&i.UnitCost,
+		&i.InitialQty,
+		&i.RemainingQty,
+	)
+	return i, err
+}
+
 const getPreferredSupplierForProduct = `-- name: GetPreferredSupplierForProduct :one
 SELECT COALESCE(
     (
@@ -255,6 +319,126 @@ func (q *Queries) GetPreferredSupplierForProduct(ctx context.Context, arg GetPre
 	var supplier_id uuid.UUID
 	err := row.Scan(&supplier_id)
 	return supplier_id, err
+}
+
+const getStockAdjustmentForUpdate = `-- name: GetStockAdjustmentForUpdate :one
+SELECT
+    sa.id, sa.business_id, sa.branch_id, sa.warehouse_id, sa.product_id, sa.batch_id,
+    sa.supplier_id, sa.adjustment_number, sa.adjustment_type, sa.disposition,
+    sa.resolution_status, sa.reason_category, sa.serial_imei, sa.qty, sa.unit_cost, sa.total_cost,
+    p.sku, p.name AS product_name
+FROM stock_adjustments sa
+JOIN products p ON p.id = sa.product_id
+WHERE sa.business_id = $1 AND sa.id = $2
+FOR UPDATE
+`
+
+type GetStockAdjustmentForUpdateParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+type GetStockAdjustmentForUpdateRow struct {
+	ID               uuid.UUID       `json:"id"`
+	BusinessID       uuid.UUID       `json:"business_id"`
+	BranchID         uuid.UUID       `json:"branch_id"`
+	WarehouseID      uuid.NullUUID   `json:"warehouse_id"`
+	ProductID        uuid.UUID       `json:"product_id"`
+	BatchID          uuid.NullUUID   `json:"batch_id"`
+	SupplierID       uuid.NullUUID   `json:"supplier_id"`
+	AdjustmentNumber string          `json:"adjustment_number"`
+	AdjustmentType   string          `json:"adjustment_type"`
+	Disposition      string          `json:"disposition"`
+	ResolutionStatus string          `json:"resolution_status"`
+	ReasonCategory   string          `json:"reason_category"`
+	SerialImei       string          `json:"serial_imei"`
+	Qty              decimal.Decimal `json:"qty"`
+	UnitCost         decimal.Decimal `json:"unit_cost"`
+	TotalCost        decimal.Decimal `json:"total_cost"`
+	Sku              string          `json:"sku"`
+	ProductName      string          `json:"product_name"`
+}
+
+func (q *Queries) GetStockAdjustmentForUpdate(ctx context.Context, arg GetStockAdjustmentForUpdateParams) (GetStockAdjustmentForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getStockAdjustmentForUpdate, arg.BusinessID, arg.ID)
+	var i GetStockAdjustmentForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.BranchID,
+		&i.WarehouseID,
+		&i.ProductID,
+		&i.BatchID,
+		&i.SupplierID,
+		&i.AdjustmentNumber,
+		&i.AdjustmentType,
+		&i.Disposition,
+		&i.ResolutionStatus,
+		&i.ReasonCategory,
+		&i.SerialImei,
+		&i.Qty,
+		&i.UnitCost,
+		&i.TotalCost,
+		&i.Sku,
+		&i.ProductName,
+	)
+	return i, err
+}
+
+const getStockAdjustmentsSummary = `-- name: GetStockAdjustmentsSummary :one
+SELECT
+    COUNT(*) FILTER (WHERE adjustment_type = 'CUSTOMER_RETURN')::INT AS customer_return_count,
+    COALESCE(SUM(refund_amount) FILTER (WHERE adjustment_type = 'CUSTOMER_RETURN'), 0)::NUMERIC(19,4) AS customer_return_refund,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type = 'CUSTOMER_RETURN'), 0)::NUMERIC(19,4) AS customer_return_cost,
+    COUNT(*) FILTER (WHERE adjustment_type = 'DAMAGE' OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition IN ('QUARANTINE_DAMAGED', 'WRITE_OFF_SCRAP')))::INT AS damage_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type = 'DAMAGE' OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition = 'QUARANTINE_DAMAGED')), 0)::NUMERIC(19,4) AS damage_cost,
+    COUNT(*) FILTER (WHERE adjustment_type IN ('WASTAGE', 'EXPIRY_WRITEOFF') OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition = 'WRITE_OFF_SCRAP'))::INT AS wastage_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type IN ('WASTAGE', 'EXPIRY_WRITEOFF') OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition = 'WRITE_OFF_SCRAP')), 0)::NUMERIC(19,4) AS wastage_cost,
+    COUNT(*) FILTER (WHERE adjustment_type = 'SUPPLIER_RETURN' OR resolution_status = 'RMA_SENT')::INT AS supplier_return_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type = 'SUPPLIER_RETURN' OR resolution_status = 'RMA_SENT'), 0)::NUMERIC(19,4) AS supplier_return_cost,
+    COUNT(*) FILTER (WHERE resolution_status = 'QUARANTINE')::INT AS quarantine_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE resolution_status = 'QUARANTINE'), 0)::NUMERIC(19,4) AS quarantine_cost
+FROM stock_adjustments
+WHERE business_id = $1
+  AND ($2::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR branch_id = $2::UUID)
+`
+
+type GetStockAdjustmentsSummaryParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Column2    uuid.UUID `json:"column_2"`
+}
+
+type GetStockAdjustmentsSummaryRow struct {
+	CustomerReturnCount  int32           `json:"customer_return_count"`
+	CustomerReturnRefund decimal.Decimal `json:"customer_return_refund"`
+	CustomerReturnCost   decimal.Decimal `json:"customer_return_cost"`
+	DamageCount          int32           `json:"damage_count"`
+	DamageCost           decimal.Decimal `json:"damage_cost"`
+	WastageCount         int32           `json:"wastage_count"`
+	WastageCost          decimal.Decimal `json:"wastage_cost"`
+	SupplierReturnCount  int32           `json:"supplier_return_count"`
+	SupplierReturnCost   decimal.Decimal `json:"supplier_return_cost"`
+	QuarantineCount      int32           `json:"quarantine_count"`
+	QuarantineCost       decimal.Decimal `json:"quarantine_cost"`
+}
+
+func (q *Queries) GetStockAdjustmentsSummary(ctx context.Context, arg GetStockAdjustmentsSummaryParams) (GetStockAdjustmentsSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getStockAdjustmentsSummary, arg.BusinessID, arg.Column2)
+	var i GetStockAdjustmentsSummaryRow
+	err := row.Scan(
+		&i.CustomerReturnCount,
+		&i.CustomerReturnRefund,
+		&i.CustomerReturnCost,
+		&i.DamageCount,
+		&i.DamageCost,
+		&i.WastageCount,
+		&i.WastageCost,
+		&i.SupplierReturnCount,
+		&i.SupplierReturnCost,
+		&i.QuarantineCount,
+		&i.QuarantineCost,
+	)
+	return i, err
 }
 
 const hasOpenPOForProductBranch = `-- name: HasOpenPOForProductBranch :one
@@ -548,6 +732,89 @@ func (q *Queries) InsertPurchaseInvoice(ctx context.Context, arg InsertPurchaseI
 		&i.Status,
 		&i.GrandTotal,
 		&i.DueDate,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertStockAdjustment = `-- name: InsertStockAdjustment :one
+INSERT INTO stock_adjustments (
+    business_id, branch_id, warehouse_id, product_id, batch_id, supplier_id,
+    invoice_id, return_invoice_id, journal_entry_id, adjustment_number,
+    source_channel, adjustment_type, disposition, resolution_status,
+    reason_category, serial_imei, rma_reference, qty, unit_cost, total_cost,
+    refund_amount, notes, actor_user_id, actor_name
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+RETURNING id, adjustment_number, resolution_status, created_at
+`
+
+type InsertStockAdjustmentParams struct {
+	BusinessID       uuid.UUID       `json:"business_id"`
+	BranchID         uuid.UUID       `json:"branch_id"`
+	WarehouseID      uuid.NullUUID   `json:"warehouse_id"`
+	ProductID        uuid.UUID       `json:"product_id"`
+	BatchID          uuid.NullUUID   `json:"batch_id"`
+	SupplierID       uuid.NullUUID   `json:"supplier_id"`
+	InvoiceID        uuid.NullUUID   `json:"invoice_id"`
+	ReturnInvoiceID  uuid.NullUUID   `json:"return_invoice_id"`
+	JournalEntryID   uuid.NullUUID   `json:"journal_entry_id"`
+	AdjustmentNumber string          `json:"adjustment_number"`
+	SourceChannel    string          `json:"source_channel"`
+	AdjustmentType   string          `json:"adjustment_type"`
+	Disposition      string          `json:"disposition"`
+	ResolutionStatus string          `json:"resolution_status"`
+	ReasonCategory   string          `json:"reason_category"`
+	SerialImei       string          `json:"serial_imei"`
+	RmaReference     string          `json:"rma_reference"`
+	Qty              decimal.Decimal `json:"qty"`
+	UnitCost         decimal.Decimal `json:"unit_cost"`
+	TotalCost        decimal.Decimal `json:"total_cost"`
+	RefundAmount     decimal.Decimal `json:"refund_amount"`
+	Notes            string          `json:"notes"`
+	ActorUserID      uuid.NullUUID   `json:"actor_user_id"`
+	ActorName        string          `json:"actor_name"`
+}
+
+type InsertStockAdjustmentRow struct {
+	ID               uuid.UUID          `json:"id"`
+	AdjustmentNumber string             `json:"adjustment_number"`
+	ResolutionStatus string             `json:"resolution_status"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) InsertStockAdjustment(ctx context.Context, arg InsertStockAdjustmentParams) (InsertStockAdjustmentRow, error) {
+	row := q.db.QueryRow(ctx, insertStockAdjustment,
+		arg.BusinessID,
+		arg.BranchID,
+		arg.WarehouseID,
+		arg.ProductID,
+		arg.BatchID,
+		arg.SupplierID,
+		arg.InvoiceID,
+		arg.ReturnInvoiceID,
+		arg.JournalEntryID,
+		arg.AdjustmentNumber,
+		arg.SourceChannel,
+		arg.AdjustmentType,
+		arg.Disposition,
+		arg.ResolutionStatus,
+		arg.ReasonCategory,
+		arg.SerialImei,
+		arg.RmaReference,
+		arg.Qty,
+		arg.UnitCost,
+		arg.TotalCost,
+		arg.RefundAmount,
+		arg.Notes,
+		arg.ActorUserID,
+		arg.ActorName,
+	)
+	var i InsertStockAdjustmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AdjustmentNumber,
+		&i.ResolutionStatus,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -1071,6 +1338,167 @@ func (q *Queries) ListPurchaseOrdersWithDetails(ctx context.Context, businessID 
 	return items, nil
 }
 
+const listStockAdjustmentsForBusiness = `-- name: ListStockAdjustmentsForBusiness :many
+SELECT
+    sa.id,
+    sa.business_id,
+    sa.branch_id,
+    br.name AS branch_name,
+    sa.warehouse_id,
+    COALESCE(wh.name, '')::TEXT AS warehouse_name,
+    sa.product_id,
+    p.sku,
+    p.name AS product_name,
+    p.unit_of_measure,
+    p.image_url,
+    sa.batch_id,
+    COALESCE(ib.batch_number, '')::TEXT AS batch_number,
+    sa.supplier_id,
+    COALESCE(sup.name, '')::TEXT AS supplier_name,
+    sa.invoice_id,
+    COALESCE(si.invoice_number, '')::TEXT AS invoice_number,
+    sa.return_invoice_id,
+    COALESCE(rsi.invoice_number, '')::TEXT AS return_invoice_number,
+    sa.journal_entry_id,
+    COALESCE(je.entry_number, '')::TEXT AS journal_entry_number,
+    sa.adjustment_number,
+    sa.source_channel,
+    sa.adjustment_type,
+    sa.disposition,
+    sa.resolution_status,
+    sa.reason_category,
+    sa.serial_imei,
+    sa.rma_reference,
+    sa.qty,
+    sa.unit_cost,
+    sa.total_cost,
+    sa.refund_amount,
+    sa.notes,
+    sa.actor_name,
+    COALESCE(ru.full_name, '')::TEXT AS resolved_by_name,
+    sa.resolved_at,
+    sa.created_at
+FROM stock_adjustments sa
+JOIN branches br ON br.id = sa.branch_id
+JOIN products p ON p.id = sa.product_id
+LEFT JOIN warehouses wh ON wh.id = sa.warehouse_id
+LEFT JOIN inventory_batches ib ON ib.id = sa.batch_id
+LEFT JOIN suppliers sup ON sup.id = sa.supplier_id
+LEFT JOIN sales_invoices si ON si.id = sa.invoice_id
+LEFT JOIN sales_invoices rsi ON rsi.id = sa.return_invoice_id
+LEFT JOIN journal_entries je ON je.id = sa.journal_entry_id
+LEFT JOIN users ru ON ru.id = sa.resolved_by
+WHERE sa.business_id = $1
+  AND ($2::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR sa.branch_id = $2::UUID)
+ORDER BY sa.created_at DESC
+LIMIT 150
+`
+
+type ListStockAdjustmentsForBusinessParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	Column2    uuid.UUID `json:"column_2"`
+}
+
+type ListStockAdjustmentsForBusinessRow struct {
+	ID                  uuid.UUID          `json:"id"`
+	BusinessID          uuid.UUID          `json:"business_id"`
+	BranchID            uuid.UUID          `json:"branch_id"`
+	BranchName          string             `json:"branch_name"`
+	WarehouseID         uuid.NullUUID      `json:"warehouse_id"`
+	WarehouseName       string             `json:"warehouse_name"`
+	ProductID           uuid.UUID          `json:"product_id"`
+	Sku                 string             `json:"sku"`
+	ProductName         string             `json:"product_name"`
+	UnitOfMeasure       string             `json:"unit_of_measure"`
+	ImageUrl            string             `json:"image_url"`
+	BatchID             uuid.NullUUID      `json:"batch_id"`
+	BatchNumber         string             `json:"batch_number"`
+	SupplierID          uuid.NullUUID      `json:"supplier_id"`
+	SupplierName        string             `json:"supplier_name"`
+	InvoiceID           uuid.NullUUID      `json:"invoice_id"`
+	InvoiceNumber       string             `json:"invoice_number"`
+	ReturnInvoiceID     uuid.NullUUID      `json:"return_invoice_id"`
+	ReturnInvoiceNumber string             `json:"return_invoice_number"`
+	JournalEntryID      uuid.NullUUID      `json:"journal_entry_id"`
+	JournalEntryNumber  string             `json:"journal_entry_number"`
+	AdjustmentNumber    string             `json:"adjustment_number"`
+	SourceChannel       string             `json:"source_channel"`
+	AdjustmentType      string             `json:"adjustment_type"`
+	Disposition         string             `json:"disposition"`
+	ResolutionStatus    string             `json:"resolution_status"`
+	ReasonCategory      string             `json:"reason_category"`
+	SerialImei          string             `json:"serial_imei"`
+	RmaReference        string             `json:"rma_reference"`
+	Qty                 decimal.Decimal    `json:"qty"`
+	UnitCost            decimal.Decimal    `json:"unit_cost"`
+	TotalCost           decimal.Decimal    `json:"total_cost"`
+	RefundAmount        decimal.Decimal    `json:"refund_amount"`
+	Notes               string             `json:"notes"`
+	ActorName           string             `json:"actor_name"`
+	ResolvedByName      string             `json:"resolved_by_name"`
+	ResolvedAt          pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ListStockAdjustmentsForBusiness(ctx context.Context, arg ListStockAdjustmentsForBusinessParams) ([]ListStockAdjustmentsForBusinessRow, error) {
+	rows, err := q.db.Query(ctx, listStockAdjustmentsForBusiness, arg.BusinessID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStockAdjustmentsForBusinessRow{}
+	for rows.Next() {
+		var i ListStockAdjustmentsForBusinessRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.BranchID,
+			&i.BranchName,
+			&i.WarehouseID,
+			&i.WarehouseName,
+			&i.ProductID,
+			&i.Sku,
+			&i.ProductName,
+			&i.UnitOfMeasure,
+			&i.ImageUrl,
+			&i.BatchID,
+			&i.BatchNumber,
+			&i.SupplierID,
+			&i.SupplierName,
+			&i.InvoiceID,
+			&i.InvoiceNumber,
+			&i.ReturnInvoiceID,
+			&i.ReturnInvoiceNumber,
+			&i.JournalEntryID,
+			&i.JournalEntryNumber,
+			&i.AdjustmentNumber,
+			&i.SourceChannel,
+			&i.AdjustmentType,
+			&i.Disposition,
+			&i.ResolutionStatus,
+			&i.ReasonCategory,
+			&i.SerialImei,
+			&i.RmaReference,
+			&i.Qty,
+			&i.UnitCost,
+			&i.TotalCost,
+			&i.RefundAmount,
+			&i.Notes,
+			&i.ActorName,
+			&i.ResolvedByName,
+			&i.ResolvedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSuppliersForBusiness = `-- name: ListSuppliersForBusiness :many
 SELECT id, business_id, code, name, email, phone, tax_id, payment_terms_days
 FROM suppliers
@@ -1192,6 +1620,60 @@ type MarkGRNApprovedParams struct {
 func (q *Queries) MarkGRNApproved(ctx context.Context, arg MarkGRNApprovedParams) error {
 	_, err := q.db.Exec(ctx, markGRNApproved, arg.BusinessID, arg.ID, arg.ApprovedBy)
 	return err
+}
+
+const resolveStockAdjustment = `-- name: ResolveStockAdjustment :one
+UPDATE stock_adjustments
+SET disposition = $3,
+    resolution_status = $4,
+    supplier_id = COALESCE($5, supplier_id),
+    rma_reference = COALESCE(NULLIF($6::TEXT, ''), rma_reference),
+    notes = CASE WHEN $7::TEXT <> '' THEN CONCAT_WS(' | ', NULLIF(notes, ''), $7::TEXT) ELSE notes END,
+    resolved_by = $8,
+    resolved_at = NOW()
+WHERE business_id = $1 AND id = $2
+RETURNING id, adjustment_number, disposition, resolution_status, resolved_at
+`
+
+type ResolveStockAdjustmentParams struct {
+	BusinessID       uuid.UUID     `json:"business_id"`
+	ID               uuid.UUID     `json:"id"`
+	Disposition      string        `json:"disposition"`
+	ResolutionStatus string        `json:"resolution_status"`
+	SupplierID       uuid.NullUUID `json:"supplier_id"`
+	Column6          string        `json:"column_6"`
+	Column7          string        `json:"column_7"`
+	ResolvedBy       uuid.NullUUID `json:"resolved_by"`
+}
+
+type ResolveStockAdjustmentRow struct {
+	ID               uuid.UUID          `json:"id"`
+	AdjustmentNumber string             `json:"adjustment_number"`
+	Disposition      string             `json:"disposition"`
+	ResolutionStatus string             `json:"resolution_status"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+}
+
+func (q *Queries) ResolveStockAdjustment(ctx context.Context, arg ResolveStockAdjustmentParams) (ResolveStockAdjustmentRow, error) {
+	row := q.db.QueryRow(ctx, resolveStockAdjustment,
+		arg.BusinessID,
+		arg.ID,
+		arg.Disposition,
+		arg.ResolutionStatus,
+		arg.SupplierID,
+		arg.Column6,
+		arg.Column7,
+		arg.ResolvedBy,
+	)
+	var i ResolveStockAdjustmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.AdjustmentNumber,
+		&i.Disposition,
+		&i.ResolutionStatus,
+		&i.ResolvedAt,
+	)
+	return i, err
 }
 
 const updateBatchRemainingQty = `-- name: UpdateBatchRemainingQty :exec

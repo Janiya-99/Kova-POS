@@ -116,6 +116,7 @@ Navigate to **POS Terminal (`/pos`)** from the left floating sidebar to run live
    - **IMEI / Serial Capture & Warranty Terms:** Because `Kova Mobile Hub` runs the `mobile` vertical preset (`pos.require_serial_imei = true`), you can record device IMEI/Serial numbers and warranty coverage (`12M Apple Care / Official Agent Warranty`, `24M Anker / Soundcore Warranty`, etc.) on serialized line items.
    - **Line Discounts & Supervisor PIN Gate:** Adjusting prices or applying manual discounts beyond the cashier's threshold prompts for a **6-digit Supervisor PIN (`123456`)**, issuing a short-lived cryptographic override token (`POST /api/v1/auth/verify-pin`).
    - **Hold / Recall Bills:** Click **Hold Bill** to park an in-progress customer order as a perforated ticket, or open the **Held Bills** drawer in the footer to recall one of the `12` pre-seeded held bills.
+   - **Returns, DOA & Damage Claims (`Returns / DOA` in POS Top Bar):** Process full or partial line-item customer returns with industry-adapted reason presets, capture IMEI/Serial numbers, choose stock routing (`Restock Sellable FIFO`, `Quarantine Damaged`, or `Wastage / Scrap Write-Off`), and automatically post reversing double-entry GL journals (with 6-digit Supervisor PIN override `123456` for cashiers).
 4. **Pane 4 — Payment Tender, Tax Breakdown & Receipt Engine (Far Right):**
    - **Customer Linking:** Attach one of the `180` CRM customers (or walk-in customer) to track warranty history and award loyalty points.
    - **Automated Sri Lankan Tax Engine:** The terminal automatically computes **SSCL (`2.5%`)** and **VAT (`18%`)** using exact `NUMERIC(19,4)` decimal math.
@@ -154,7 +155,7 @@ Organize products into logical department groups (`Flagship Smartphones`, `Mid-R
 
 1. **FIFO Batch Explorer (`/inventory`):**
    - Inspect live stock quantities across branches, filter by **Category** or **Brand**, and expand any product to view its active **FIFO Inventory Batches** (`batch_number`, `unit_cost`, `initial_qty`, `remaining_qty`, `received_at`, `expiry_date`).
-   - Use **Stock Adjustment / Return** to record damaged goods or supplier returns with full audit trails.
+   - Use **Returns, DOA & E-Waste** (tab label adapts automatically per business vertical: *Voids & Kitchen Wastage*, *Yard Damage & Cut-Scrap*, *Core Returns & Fluid Wastage*, *Defective Garments & RTV*, etc.) and **Record Damage / Wastage / RMA** to deplete damaged, spoiled, expired, or distributor-returned batches with balanced GL posting (`DR 5100 Shrinkage/Wastage` or `DR 2000 Accounts Payable` / `CR 1200 Inventory Asset`) and resolve quarantined items (`Ship RMA`, `Repair & Restock`, `Scrap`).
 2. **Receive New Stock — GRN Intake Drawer (`/inventory` -> `Receive GRN`):**
    - Select a Supplier (from the `18` official distributors such as *Abans Apple Authorized Dist.*, *OPPO Lanka Official Distribution*, *Infinix Mobility Sri Lanka*, *Anker Soundcore Lanka Distribution*, *John Keells Office Automation*, *Singer Sri Lanka Digital Hub*) and optionally link an approved Purchase Order.
    - Add line items with batch numbers, unit cost, and received quantity.

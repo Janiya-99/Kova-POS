@@ -275,3 +275,123 @@ ORDER BY total_remaining ASC, p.name ASC;
 -- name: GetDefaultSupplierForBusiness :one
 SELECT id, name, payment_terms_days FROM suppliers WHERE business_id = $1 ORDER BY created_at ASC LIMIT 1;
 
+-- name: GetInventoryBatchForUpdate :one
+SELECT id, business_id, branch_id, product_id, batch_number, unit_cost, initial_qty, remaining_qty
+FROM inventory_batches
+WHERE business_id = $1 AND id = $2
+FOR UPDATE;
+
+-- name: GetDefaultWarehouseForBranch :one
+SELECT id, name
+FROM warehouses
+WHERE business_id = $1 AND branch_id = $2
+ORDER BY created_at ASC
+LIMIT 1;
+
+-- name: InsertStockAdjustment :one
+INSERT INTO stock_adjustments (
+    business_id, branch_id, warehouse_id, product_id, batch_id, supplier_id,
+    invoice_id, return_invoice_id, journal_entry_id, adjustment_number,
+    source_channel, adjustment_type, disposition, resolution_status,
+    reason_category, serial_imei, rma_reference, qty, unit_cost, total_cost,
+    refund_amount, notes, actor_user_id, actor_name
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+RETURNING id, adjustment_number, resolution_status, created_at;
+
+-- name: ListStockAdjustmentsForBusiness :many
+SELECT
+    sa.id,
+    sa.business_id,
+    sa.branch_id,
+    br.name AS branch_name,
+    sa.warehouse_id,
+    COALESCE(wh.name, '')::TEXT AS warehouse_name,
+    sa.product_id,
+    p.sku,
+    p.name AS product_name,
+    p.unit_of_measure,
+    p.image_url,
+    sa.batch_id,
+    COALESCE(ib.batch_number, '')::TEXT AS batch_number,
+    sa.supplier_id,
+    COALESCE(sup.name, '')::TEXT AS supplier_name,
+    sa.invoice_id,
+    COALESCE(si.invoice_number, '')::TEXT AS invoice_number,
+    sa.return_invoice_id,
+    COALESCE(rsi.invoice_number, '')::TEXT AS return_invoice_number,
+    sa.journal_entry_id,
+    COALESCE(je.entry_number, '')::TEXT AS journal_entry_number,
+    sa.adjustment_number,
+    sa.source_channel,
+    sa.adjustment_type,
+    sa.disposition,
+    sa.resolution_status,
+    sa.reason_category,
+    sa.serial_imei,
+    sa.rma_reference,
+    sa.qty,
+    sa.unit_cost,
+    sa.total_cost,
+    sa.refund_amount,
+    sa.notes,
+    sa.actor_name,
+    COALESCE(ru.full_name, '')::TEXT AS resolved_by_name,
+    sa.resolved_at,
+    sa.created_at
+FROM stock_adjustments sa
+JOIN branches br ON br.id = sa.branch_id
+JOIN products p ON p.id = sa.product_id
+LEFT JOIN warehouses wh ON wh.id = sa.warehouse_id
+LEFT JOIN inventory_batches ib ON ib.id = sa.batch_id
+LEFT JOIN suppliers sup ON sup.id = sa.supplier_id
+LEFT JOIN sales_invoices si ON si.id = sa.invoice_id
+LEFT JOIN sales_invoices rsi ON rsi.id = sa.return_invoice_id
+LEFT JOIN journal_entries je ON je.id = sa.journal_entry_id
+LEFT JOIN users ru ON ru.id = sa.resolved_by
+WHERE sa.business_id = $1
+  AND ($2::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR sa.branch_id = $2::UUID)
+ORDER BY sa.created_at DESC
+LIMIT 150;
+
+-- name: GetStockAdjustmentsSummary :one
+SELECT
+    COUNT(*) FILTER (WHERE adjustment_type = 'CUSTOMER_RETURN')::INT AS customer_return_count,
+    COALESCE(SUM(refund_amount) FILTER (WHERE adjustment_type = 'CUSTOMER_RETURN'), 0)::NUMERIC(19,4) AS customer_return_refund,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type = 'CUSTOMER_RETURN'), 0)::NUMERIC(19,4) AS customer_return_cost,
+    COUNT(*) FILTER (WHERE adjustment_type = 'DAMAGE' OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition IN ('QUARANTINE_DAMAGED', 'WRITE_OFF_SCRAP')))::INT AS damage_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type = 'DAMAGE' OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition = 'QUARANTINE_DAMAGED')), 0)::NUMERIC(19,4) AS damage_cost,
+    COUNT(*) FILTER (WHERE adjustment_type IN ('WASTAGE', 'EXPIRY_WRITEOFF') OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition = 'WRITE_OFF_SCRAP'))::INT AS wastage_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type IN ('WASTAGE', 'EXPIRY_WRITEOFF') OR (adjustment_type = 'CUSTOMER_RETURN' AND disposition = 'WRITE_OFF_SCRAP')), 0)::NUMERIC(19,4) AS wastage_cost,
+    COUNT(*) FILTER (WHERE adjustment_type = 'SUPPLIER_RETURN' OR resolution_status = 'RMA_SENT')::INT AS supplier_return_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE adjustment_type = 'SUPPLIER_RETURN' OR resolution_status = 'RMA_SENT'), 0)::NUMERIC(19,4) AS supplier_return_cost,
+    COUNT(*) FILTER (WHERE resolution_status = 'QUARANTINE')::INT AS quarantine_count,
+    COALESCE(SUM(total_cost) FILTER (WHERE resolution_status = 'QUARANTINE'), 0)::NUMERIC(19,4) AS quarantine_cost
+FROM stock_adjustments
+WHERE business_id = $1
+  AND ($2::UUID = '00000000-0000-0000-0000-000000000000'::UUID OR branch_id = $2::UUID);
+
+-- name: GetStockAdjustmentForUpdate :one
+SELECT
+    sa.id, sa.business_id, sa.branch_id, sa.warehouse_id, sa.product_id, sa.batch_id,
+    sa.supplier_id, sa.adjustment_number, sa.adjustment_type, sa.disposition,
+    sa.resolution_status, sa.reason_category, sa.serial_imei, sa.qty, sa.unit_cost, sa.total_cost,
+    p.sku, p.name AS product_name
+FROM stock_adjustments sa
+JOIN products p ON p.id = sa.product_id
+WHERE sa.business_id = $1 AND sa.id = $2
+FOR UPDATE;
+
+-- name: ResolveStockAdjustment :one
+UPDATE stock_adjustments
+SET disposition = $3,
+    resolution_status = $4,
+    supplier_id = COALESCE($5, supplier_id),
+    rma_reference = COALESCE(NULLIF($6::TEXT, ''), rma_reference),
+    notes = CASE WHEN $7::TEXT <> '' THEN CONCAT_WS(' | ', NULLIF(notes, ''), $7::TEXT) ELSE notes END,
+    resolved_by = $8,
+    resolved_at = NOW()
+WHERE business_id = $1 AND id = $2
+RETURNING id, adjustment_number, disposition, resolution_status, resolved_at;
+
+

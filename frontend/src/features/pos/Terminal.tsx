@@ -61,6 +61,7 @@ import { OutgoingOrdersQueue } from './components/OutgoingOrdersQueue';
 import { ActiveCart, type CartTotalsSummary } from './components/ActiveCart';
 import { TerminalTopBar } from './components/TerminalTopBar';
 import { TerminalFooter } from './components/TerminalFooter';
+import { POSReturnsDrawer } from './components/POSReturnsDrawer';
 import {
   resolvePOSCapabilities,
   type OrderChannel,
@@ -180,6 +181,7 @@ export function Terminal({
   const [search, setSearch] = React.useState('');
   const [customerPopoverOpen, setCustomerPopoverOpen] = React.useState(false);
   const [customerSheetOpen, setCustomerSheetOpen] = React.useState(false);
+  const [returnsDrawerOpen, setReturnsDrawerOpen] = React.useState(false);
   const [sidebarSheetOpen, setSidebarSheetOpen] = React.useState(false);
   const [receiptData, setReceiptData] = React.useState<ReceiptModalData | null>(null);
   const [lastReceipt, setLastReceipt] = React.useState<ReceiptModalData | null>(null);
@@ -1042,6 +1044,7 @@ export function Terminal({
         zoomLevel={posZoom}
         onToggleZoom={() => setPosZoom((prev) => (prev === '0.8' ? '1' : '0.8'))}
         onOpenSidebar={() => setSidebarSheetOpen(true)}
+        onOpenReturns={() => setReturnsDrawerOpen(true)}
       />
 
       {/* Mobile / Tablet Compact Segmented Pane Bar (< xl) */}
@@ -1368,6 +1371,18 @@ export function Terminal({
           if (pendingPayload && pendingKey) {
             void executeCheckout(pendingPayload, pendingKey, overrideToken);
           }
+        }}
+      />
+
+      <POSReturnsDrawer
+        open={returnsDrawerOpen}
+        onOpenChange={setReturnsDrawerOpen}
+        onReturnProcessed={() => {
+          void refetch();
+          void queryClient.invalidateQueries({ queryKey: ['overview'] });
+          void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+          void queryClient.invalidateQueries({ queryKey: ['accounting'] });
+          void queryClient.invalidateQueries({ queryKey: ['reports'] });
         }}
       />
     </div>

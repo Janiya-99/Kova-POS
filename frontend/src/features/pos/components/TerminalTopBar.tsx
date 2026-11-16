@@ -5,6 +5,7 @@ import {
   Clock,
   Menu,
   Monitor,
+  RotateCcw,
   Store,
   UserCheck,
   Wifi,
@@ -14,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { KovaMark } from '@/components/brand/KovaLogo';
 import { useRealtimeStore } from '@/lib/realtime';
 import { formatDisplayLabel } from '@/lib/formatLabel';
+import { getIndustryReturnAndWastagePresets } from '@/lib/branchAccess';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
 import type { POSCapabilities } from './capabilities';
 
@@ -26,6 +28,7 @@ export interface TerminalTopBarProps {
   zoomLevel: '0.8' | '1';
   onToggleZoom: () => void;
   onOpenSidebar: () => void;
+  onOpenReturns?: () => void;
 }
 
 /**
@@ -44,7 +47,12 @@ export function TerminalTopBar({
   zoomLevel,
   onToggleZoom,
   onOpenSidebar,
+  onOpenReturns,
 }: TerminalTopBarProps) {
+  const returnPresets = React.useMemo(
+    () => getIndustryReturnAndWastagePresets(capabilities.layoutMode),
+    [capabilities.layoutMode],
+  );
   const { context, publicBranding, terminals } = useAuthStore();
   const { wsStatus, lastSyncedAt } = useRealtimeStore();
   const [now, setNow] = React.useState<Date>(() => new Date());
@@ -186,19 +194,36 @@ export function TerminalTopBar({
         </button>
       </div>
 
-      {/* Right: Mandatory Live Date & Ticking Clock */}
-      <div
-        data-testid="pos-topbar-clock"
-        className="flex shrink-0 items-center gap-2 rounded-[12px] bg-[#222026] px-2.5 sm:px-3.5 py-1.5 text-white shadow-xs"
-      >
-        <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-medium text-white/80">
-          <Calendar className="h-3.5 w-3.5 text-accent-soft" />
-          <span className="tabular-nums whitespace-nowrap">{dateText}</span>
-        </div>
-        <span className="hidden sm:inline h-3.5 w-px bg-white/20" aria-hidden="true" />
-        <div className="flex items-center gap-1.5 font-mono text-[12px] sm:text-[13px] font-extrabold tracking-tight tabular-nums whitespace-nowrap">
-          <Clock className="h-3.5 w-3.5 text-[#22C55E]" />
-          <span>{timeText}</span>
+      {/* Right: Returns Trigger + Mandatory Live Date & Ticking Clock */}
+      <div className="flex shrink-0 items-center gap-2">
+        {onOpenReturns && (
+          <button
+            type="button"
+            onClick={onOpenReturns}
+            data-testid="pos-open-returns-btn"
+            title={returnPresets.posModalTitle}
+            className="inline-flex h-8.5 items-center gap-1.5 rounded-[11px] border border-[#FB4967]/35 bg-[#FB4967]/10 px-2.5 sm:px-3 text-[11px] font-bold text-[#E11D48] transition-colors hover:bg-[#FB4967]/20 cursor-pointer"
+          >
+            <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+            <span className="hidden sm:inline whitespace-nowrap">
+              {returnPresets.posButtonLabel}
+            </span>
+          </button>
+        )}
+
+        <div
+          data-testid="pos-topbar-clock"
+          className="flex shrink-0 items-center gap-2 rounded-[12px] bg-[#222026] px-2.5 sm:px-3.5 py-1.5 text-white shadow-xs"
+        >
+          <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-medium text-white/80">
+            <Calendar className="h-3.5 w-3.5 text-accent-soft" />
+            <span className="tabular-nums whitespace-nowrap">{dateText}</span>
+          </div>
+          <span className="hidden sm:inline h-3.5 w-px bg-white/20" aria-hidden="true" />
+          <div className="flex items-center gap-1.5 font-mono text-[12px] sm:text-[13px] font-extrabold tracking-tight tabular-nums whitespace-nowrap">
+            <Clock className="h-3.5 w-3.5 text-[#22C55E]" />
+            <span>{timeText}</span>
+          </div>
         </div>
       </div>
     </header>

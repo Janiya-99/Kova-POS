@@ -728,6 +728,39 @@ func (h *Handler) RefundInvoice(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "REFUND", "invoice_id": invID})
 }
 
+// ListPOSInvoicesForReturn searches recent branch sales invoices for full/partial POS returns & damaged claims.
+func (h *Handler) ListPOSInvoicesForReturn(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	data, err := h.posUC(c).ListRecentInvoicesForReturn(c.UserContext(), tc, c.Query("q"))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(data)
+}
+
+// ProcessPOSReturn processes full or partial line-item sales returns with sellable restock vs damaged quarantine/wastage disposition.
+func (h *Handler) ProcessPOSReturn(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	var body struct {
+		InvoiceID uuid.UUID `json:"invoice_id"`
+		usecase.ProcessPOSReturnRequest
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid POS return payload"})
+	}
+	if body.InvoiceID == uuid.Nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invoice_id is required"})
+	}
+	claim, _ := middleware.GetSupervisorClaim(c)
+	res, err := h.posUC(c).ProcessPOSReturn(c.UserContext(), tc, body.InvoiceID, body.ProcessPOSReturnRequest, claim)
+	if err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.recordAudit(c, tc, "POS", "POS_RETURN_PROCESSED", "sales_invoice", body.InvoiceID.String(),
+		"Processed POS sales return / damage claim", "SUCCESS", res)
+	return c.Status(fiber.StatusCreated).JSON(res)
+}
+
 // ListHeldBills returns active suspended bills for the branch.
 func (h *Handler) ListHeldBills(c *fiber.Ctx) error {
 	tc, _ := middleware.GetTenantContext(c)
@@ -901,6 +934,56 @@ func (h *Handler) ApproveGRN(c *fiber.Ctx) error {
 	h.recordAudit(c, tc, "INVENTORY", "GRN_APPROVED", "grn", grnID.String(),
 		"Approved GRN "+grnID.String()+" and posted FIFO batches + GL", "SUCCESS", map[string]any{"journal_id": jeID})
 	return c.JSON(fiber.Map{"status": "APPROVED", "journal_id": jeID})
+}
+
+// ListStockAdjustments lists returns, damages, wastages, expiry write-offs, and supplier RMA adjustments.
+func (h *Handler) ListStockAdjustments(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	scopedBranch, err := resolveQueryScopedBranch(c, tc)
+	if err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+	data, err := h.inventoryUC(c).ListStockAdjustments(c.UserContext(), tc.BusinessID, scopedBranch, tc.HasMultiBranchAccess())
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(data)
+}
+
+// CreateStockAdjustment atomically records damaged, wasted, expired, or RMA-returned stock against FIFO layers + GL.
+func (h *Handler) CreateStockAdjustment(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	var req usecase.CreateStockAdjustmentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid stock adjustment payload"})
+	}
+	res, err := h.inventoryUC(c).CreateStockAdjustment(c.UserContext(), tc, req)
+	if err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.recordAudit(c, tc, "INVENTORY", "STOCK_ADJUSTMENT_RECORDED", "stock_adjustment", fmt.Sprint(res["adjustment_id"]),
+		fmt.Sprintf("Recorded %s stock adjustment (%s)", req.AdjustmentType, req.ReasonCategory), "SUCCESS", res)
+	return c.Status(fiber.StatusCreated).JSON(res)
+}
+
+// ResolveStockAdjustment transitions a QUARANTINE stock item to RMA_SENT, SCRAPPED, or REPAIRED_RESTOCKED.
+func (h *Handler) ResolveStockAdjustment(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	adjID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid adjustment id"})
+	}
+	var req usecase.ResolveStockAdjustmentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid resolution payload"})
+	}
+	res, err := h.inventoryUC(c).ResolveQuarantinedAdjustment(c.UserContext(), tc, adjID, req)
+	if err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	h.recordAudit(c, tc, "INVENTORY", "QUARANTINE_RESOLVED", "stock_adjustment", adjID.String(),
+		fmt.Sprintf("Resolved quarantine item to %s", req.Action), "SUCCESS", res)
+	return c.JSON(res)
 }
 
 // GetAccountingWorkspace returns Chart of Accounts, Fiscal Periods, and GL Journals.
