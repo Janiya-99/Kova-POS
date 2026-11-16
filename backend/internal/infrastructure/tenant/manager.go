@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	dbinfra "github.com/enterprise-pos/backend/internal/infrastructure/db"
+	"github.com/enterprise-pos/backend/internal/infrastructure/mailer"
 	"github.com/enterprise-pos/backend/internal/infrastructure/ws"
 	"github.com/enterprise-pos/backend/internal/repository/sqlc/db"
 	"github.com/enterprise-pos/backend/internal/usecase"
@@ -56,6 +57,7 @@ type TenantManager struct {
 	migrationsDir   string
 	redis           *redis.Client
 	hub             *ws.Hub
+	mailer          *mailer.Mailer
 	enqueuer        usecase.LowStockEnqueuer
 	jwtSecret       string
 	pinTokenSecret  string
@@ -64,6 +66,18 @@ type TenantManager struct {
 	bySlug map[string]*TenantBundle
 	byID   map[uuid.UUID]*TenantBundle
 	byDB   map[string]*TenantBundle
+}
+
+// SetMailer attaches an outbound SMTP mailer to the manager and all active tenant auth bundles.
+func (m *TenantManager) SetMailer(mail *mailer.Mailer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mailer = mail
+	for _, b := range m.byID {
+		if b != nil && b.Auth != nil {
+			b.Auth.SetMailer(mail)
+		}
+	}
 }
 
 // NewTenantManager constructs the Master-to-Tenant database router and connection pool cache.
@@ -129,6 +143,7 @@ func (m *TenantManager) buildBundle(companyID uuid.UUID, slug, dbName string, po
 	authUC.SetTenantIdentity(slug, dbName)
 	authUC.SetSettingsResolver(settingsUC)
 	authUC.SetHub(m.hub)
+	authUC.SetMailer(m.mailer)
 
 	return &TenantBundle{
 		CompanyID:   companyID,

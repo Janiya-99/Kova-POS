@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +71,45 @@ func TestSessionJWTParsingAndPolicyDefaults(t *testing.T) {
 		SessionID:  uuid.Nil,
 	}); err == nil {
 		t.Fatalf("expected missing session identifier error when store is wired")
+	}
+}
+
+func TestPasswordResetTokenHelpersAndMailerGuard(t *testing.T) {
+	code1, tok1, err := generateResetCodeAndToken()
+	if err != nil {
+		t.Fatalf("generateResetCodeAndToken failed: %v", err)
+	}
+	code2, tok2, err := generateResetCodeAndToken()
+	if err != nil {
+		t.Fatalf("second generateResetCodeAndToken failed: %v", err)
+	}
+	if len(code1) != 6 || len(code2) != 6 {
+		t.Fatalf("expected 6-digit OTP codes, got %q and %q", code1, code2)
+	}
+	for _, r := range code1 {
+		if r < '0' || r > '9' {
+			t.Fatalf("expected numeric digit in OTP %q", code1)
+		}
+	}
+	if len(tok1) < 32 || tok1 == tok2 {
+		t.Fatalf("expected unique URL-safe tokens, got %q and %q", tok1, tok2)
+	}
+
+	key := []byte("kova-pos-secret")
+	h1 := hashResetSecret(code1, key)
+	h2 := hashResetSecret("  "+code1+" ", key)
+	hOther := hashResetSecret("000000", key)
+	if h1 == "" || h1 != h2 || h1 == strings.TrimSpace(code1) {
+		t.Fatalf("expected deterministic non-plaintext HMAC hash, got %q vs %q", h1, h2)
+	}
+	if h1 == hOther && code1 != "000000" {
+		t.Fatalf("expected different codes to produce different HMAC digests")
+	}
+
+	authUC := NewAuthUsecase(nil, nil, "kova-pos-secret", "pin-secret")
+	_, _, sent, err := authUC.RequestPasswordResetEmail(context.Background(), "owner@zonaretail.com", "zona-retail", "127.0.0.1")
+	if !errors.Is(err, ErrMailerNotConfigured) {
+		t.Fatalf("expected ErrMailerNotConfigured when mailer is nil, got sent=%v err=%v", sent, err)
 	}
 }
 

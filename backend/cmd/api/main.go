@@ -11,6 +11,7 @@ import (
 	"github.com/enterprise-pos/backend/internal/config"
 	deliveryhttp "github.com/enterprise-pos/backend/internal/delivery/http"
 	dbinfra "github.com/enterprise-pos/backend/internal/infrastructure/db"
+	"github.com/enterprise-pos/backend/internal/infrastructure/mailer"
 	"github.com/enterprise-pos/backend/internal/infrastructure/ratelimit"
 	"github.com/enterprise-pos/backend/internal/infrastructure/tenant"
 	"github.com/enterprise-pos/backend/internal/infrastructure/ws"
@@ -77,6 +78,16 @@ func main() {
 	adminAuditUC := usecase.NewAdminAuditUsecase(masterPool, masterQueries, nil, rdb)
 	adminAuditUC.SetProvisioner(tenantMgr)
 	masterAuthUC.SetHub(hub)
+	mailClient := mailer.New(mailer.Config{
+		Host:       cfg.SMTPHost,
+		Port:       cfg.SMTPPort,
+		User:       cfg.SMTPUser,
+		Password:   cfg.SMTPPassword,
+		From:       cfg.SMTPFrom,
+		AppBaseURL: cfg.AppBaseURL,
+	})
+	masterAuthUC.SetMailer(mailClient)
+	tenantMgr.SetMailer(mailClient)
 	limiter := ratelimit.NewLimiter(rdb)
 
 	asynqServer := worker.StartLowStockWorker(cfg.RedisAddr, tenantMgr, hub)

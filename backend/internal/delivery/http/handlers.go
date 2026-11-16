@@ -335,6 +335,88 @@ func (h *Handler) VerifySupervisorPIN(c *fiber.Ctx) error {
 	})
 }
 
+// ForgotPassword generates a single-use 6-digit email OTP + reset link and sends it via configured SMTP relay.
+func (h *Handler) ForgotPassword(c *fiber.Ctx) error {
+	var body struct {
+		Email       string `json:"email"`
+		CompanySlug string `json:"company_slug"`
+		BusinessID  string `json:"business_id,omitempty"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid forgot-password payload"})
+	}
+	cleanEmail := strings.ToLower(strings.TrimSpace(body.Email))
+	if cleanEmail == "" || !strings.Contains(cleanEmail, "@") {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "valid email address is required"})
+	}
+
+	// Apply per-email recovery throttling alongside the IP limiter so repeated inbox bombs are blocked.
+	if h.rateLimiter != nil {
+		if res := h.rateLimiter.Allow(c.UserContext(), "auth_recovery", "email:"+cleanEmail, 0, 0); !res.Allowed {
+			h.onRateLimitBlocked(c, res)
+			return middleware.TooManyRequestsResponse(
+				c,
+				res.Policy,
+				res.RetryAfterSeconds,
+				res.Limit,
+				fmt.Sprintf("Too many password reset requests for %s. Try again in %d seconds.", cleanEmail, res.RetryAfterSeconds),
+			)
+		}
+	}
+
+	bundle, bErr := h.resolvePublicTenantForAuth(c, body.CompanySlug, body.BusinessID, cleanEmail)
+	if bErr != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": bErr.Error()})
+	}
+
+	userID, bizID, sent, err := bundle.Auth.RequestPasswordResetEmail(c.UserContext(), cleanEmail, bundle.Slug, c.IP())
+	if err != nil {
+		if h.adminAudit != nil {
+			h.adminAudit.RecordEvent(c.UserContext(), usecase.AuditEventInput{
+				BusinessID:  &bundle.CompanyID,
+				CompanySlug: bundle.Slug,
+				DBName:      bundle.DBName,
+				ActorEmail:  cleanEmail,
+				Module:      "AUTH",
+				Action:      "PASSWORD_RESET_EMAIL_FAILED",
+				EntityType:  "user",
+				EntityID:    cleanEmail,
+				Summary:     "Password reset email delivery failed for " + cleanEmail + ": " + err.Error(),
+				IPAddress:   c.IP(),
+				Status:      "ERROR",
+			})
+		}
+		if strings.Contains(err.Error(), "email service is not configured") {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "unable to send verification email: " + err.Error()})
+	}
+
+	if sent && h.adminAudit != nil {
+		uid := userID
+		h.adminAudit.RecordEvent(c.UserContext(), usecase.AuditEventInput{
+			BusinessID:  bizID,
+			CompanySlug: bundle.Slug,
+			DBName:      bundle.DBName,
+			ActorUserID: &uid,
+			ActorEmail:  cleanEmail,
+			Module:      "AUTH",
+			Action:      "PASSWORD_RESET_EMAIL_SENT",
+			EntityType:  "user",
+			EntityID:    uid.String(),
+			Summary:     "Password reset verification code emailed to " + cleanEmail + " in " + bundle.Slug,
+			IPAddress:   c.IP(),
+			Status:      "SUCCESS",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"status":             "reset_email_sent",
+		"message":            "If an active account matches that email, a 6-digit verification code and direct reset link have been sent.",
+		"expires_in_minutes": 15,
+	})
+}
+
 // ResetPassword updates a user's password strictly inside the specified company's database.
 func (h *Handler) ResetPassword(c *fiber.Ctx) error {
 	var body struct {

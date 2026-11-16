@@ -2,13 +2,20 @@ package usecase
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
 	"github.com/enterprise-pos/backend/internal/domain"
+	"github.com/enterprise-pos/backend/internal/infrastructure/mailer"
 	"github.com/enterprise-pos/backend/internal/infrastructure/ws"
 	"github.com/enterprise-pos/backend/internal/repository/sqlc/db"
 	"github.com/golang-jwt/jwt/v5"
@@ -85,10 +92,18 @@ type OverrideJWTClaims struct {
 	jwt.RegisteredClaims
 }
 
-// ResetPasswordRequest verifies identity via current password or authorizing supervisor PIN before updating password.
+// PasswordResetMailer defines the outbound SMTP interface for sending password reset emails.
+type PasswordResetMailer interface {
+	IsConfigured() bool
+	SendPasswordResetEmail(ctx context.Context, in mailer.PasswordResetEmailInput) error
+}
+
+// ResetPasswordRequest verifies identity via email OTP/token, current password, or supervisor PIN before updating password.
 type ResetPasswordRequest struct {
-	Mode            string `json:"mode"` // "current_password" | "supervisor_pin"
+	Mode            string `json:"mode"` // "email_code" | "email_token" | "current_password" | "supervisor_pin"
 	Email           string `json:"email"`
+	EmailCode       string `json:"email_code"`
+	ResetToken      string `json:"reset_token"`
 	CurrentPassword string `json:"current_password"`
 	SupervisorEmail string `json:"supervisor_email"`
 	SupervisorPIN   string `json:"supervisor_pin"`
@@ -135,6 +150,7 @@ type AuthUsecase struct {
 	redis          *redis.Client
 	settings       *SettingsResolver
 	hub            *ws.Hub
+	mailer         PasswordResetMailer
 	jwtSecret      []byte
 	pinTokenSecret []byte
 	companySlug    string
@@ -165,6 +181,11 @@ func (a *AuthUsecase) SetSettingsResolver(sr *SettingsResolver) {
 // SetHub attaches the tenant WebSocket hub to push real-time SESSION_REVOKED broadcasts.
 func (a *AuthUsecase) SetHub(hub *ws.Hub) {
 	a.hub = hub
+}
+
+// SetMailer attaches an SMTP mailer for self-service password reset verification emails.
+func (a *AuthUsecase) SetMailer(m PasswordResetMailer) {
+	a.mailer = m
 }
 
 // SummarizeDeviceLabel turns a raw HTTP User-Agent string into a crisp human-readable device tag.
@@ -1083,8 +1104,109 @@ func (a *AuthUsecase) VerifySupervisorPIN(ctx context.Context, businessID uuid.U
 	return "", nil, errors.New("invalid supervisor PIN")
 }
 
-// ResetPasswordWithVerification updates a user's password after verifying either their current password
-// or an authorizing supervisor's email + 6-digit PIN within a shared business tenant.
+const (
+	passwordResetTTLMinutes = 15
+	passwordResetMaxGuesses = 5
+)
+
+var ErrMailerNotConfigured = errors.New("email service is not configured: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM in .env")
+
+func hashResetSecret(secret string, key []byte) string {
+	clean := strings.TrimSpace(secret)
+	if len(key) > 0 {
+		mac := hmac.New(sha256.New, key)
+		mac.Write([]byte(clean))
+		return hex.EncodeToString(mac.Sum(nil))
+	}
+	sum := sha256.Sum256([]byte(clean))
+	return hex.EncodeToString(sum[:])
+}
+
+func generateResetCodeAndToken() (code string, token string, err error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", "", err
+	}
+	code = fmt.Sprintf("%06d", n.Int64())
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", err
+	}
+	token = base64.RawURLEncoding.EncodeToString(raw)
+	return code, token, nil
+}
+
+// RequestPasswordResetEmail generates a 6-digit OTP and URL reset token, stores SHA-256 HMAC hashes,
+// and delivers the reset verification email to the user without leaking account existence.
+func (a *AuthUsecase) RequestPasswordResetEmail(ctx context.Context, email, companySlug, requestedIP string) (uuid.UUID, *uuid.UUID, bool, error) {
+	targetEmail := strings.ToLower(strings.TrimSpace(email))
+	if targetEmail == "" || !strings.Contains(targetEmail, "@") {
+		return uuid.Nil, nil, false, errors.New("valid account email is required")
+	}
+	if a.mailer == nil || !a.mailer.IsConfigured() {
+		return uuid.Nil, nil, false, ErrMailerNotConfigured
+	}
+
+	user, err := a.queries.GetUserByEmail(ctx, targetEmail)
+	if err != nil {
+		// Return non-enumerating success indicator when email has no active user account.
+		return uuid.Nil, nil, false, nil
+	}
+
+	contexts, cErr := a.queries.GetUserBusinessContexts(ctx, user.ID)
+	if cErr != nil {
+		contexts = nil
+	}
+	var auditBizID *uuid.UUID
+	if len(contexts) > 0 {
+		id := contexts[0].BusinessID
+		auditBizID = &id
+	}
+
+	code, rawToken, err := generateResetCodeAndToken()
+	if err != nil {
+		return user.ID, auditBizID, false, err
+	}
+
+	if err := a.queries.InvalidateUnusedPasswordResetTokens(ctx, user.ID); err != nil {
+		return user.ID, auditBizID, false, err
+	}
+
+	expiresAt := time.Now().UTC().Add(time.Duration(passwordResetTTLMinutes) * time.Minute)
+	if _, err := a.queries.CreatePasswordResetToken(ctx, db.CreatePasswordResetTokenParams{
+		UserID:      user.ID,
+		Email:       targetEmail,
+		CodeHash:    hashResetSecret(code, a.jwtSecret),
+		TokenHash:   hashResetSecret(rawToken, a.jwtSecret),
+		ExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		RequestedIp: strings.TrimSpace(requestedIP),
+	}); err != nil {
+		return user.ID, auditBizID, false, err
+	}
+
+	slug := strings.TrimSpace(companySlug)
+	if slug == "" {
+		slug = strings.TrimSpace(a.companySlug)
+	}
+
+	if sendErr := a.mailer.SendPasswordResetEmail(ctx, mailer.PasswordResetEmailInput{
+		ToEmail:          targetEmail,
+		FullName:         user.FullName,
+		CompanySlug:      slug,
+		Code:             code,
+		ResetToken:       rawToken,
+		ExpiresInMinutes: passwordResetTTLMinutes,
+	}); sendErr != nil {
+		_ = a.queries.InvalidateUnusedPasswordResetTokens(ctx, user.ID)
+		return user.ID, auditBizID, false, sendErr
+	}
+
+	return user.ID, auditBizID, true, nil
+}
+
+// ResetPasswordWithVerification updates a user's password after verifying either their email verification OTP/token,
+// current password, or an authorizing supervisor's email + 6-digit PIN within a shared business tenant.
 func (a *AuthUsecase) ResetPasswordWithVerification(ctx context.Context, req ResetPasswordRequest) (uuid.UUID, *uuid.UUID, string, error) {
 	targetEmail := strings.ToLower(strings.TrimSpace(req.Email))
 	if targetEmail == "" || !strings.Contains(targetEmail, "@") {
@@ -1114,8 +1236,44 @@ func (a *AuthUsecase) ResetPasswordWithVerification(ctx context.Context, req Res
 		mode = "current_password"
 	}
 
+	var matchedResetTokenID *uuid.UUID
 	actorLabel := user.FullName
 	switch mode {
+	case "email_code", "email_token":
+		rawToken := strings.TrimSpace(req.ResetToken)
+		rawCode := strings.TrimSpace(req.EmailCode)
+		if rawToken != "" {
+			tokHash := hashResetSecret(rawToken, a.jwtSecret)
+			rec, tErr := a.queries.GetActivePasswordResetTokenByTokenHash(ctx, tokHash)
+			if tErr != nil || rec.UserID != user.ID || rec.Attempts >= passwordResetMaxGuesses {
+				return uuid.Nil, auditBizID, "", errors.New("verification failed: invalid or expired email reset link")
+			}
+			idCopy := rec.ID
+			matchedResetTokenID = &idCopy
+			actorLabel = user.FullName + " (Email Link)"
+		} else {
+			if len(rawCode) != 6 {
+				return uuid.Nil, auditBizID, "", errors.New("6-digit email verification code is required")
+			}
+			rec, cErr := a.queries.GetLatestActivePasswordResetTokenByEmail(ctx, db.GetLatestActivePasswordResetTokenByEmailParams{
+				UserID: user.ID,
+				Lower:  targetEmail,
+			})
+			if cErr != nil || rec.Attempts >= passwordResetMaxGuesses {
+				return uuid.Nil, auditBizID, "", errors.New("verification failed: invalid or expired email verification code")
+			}
+			expectedHash := hashResetSecret(rawCode, a.jwtSecret)
+			if !hmac.Equal([]byte(rec.CodeHash), []byte(expectedHash)) {
+				updated, _ := a.queries.IncrementPasswordResetTokenAttempts(ctx, rec.ID)
+				if updated.Attempts >= passwordResetMaxGuesses {
+					return uuid.Nil, auditBizID, "", errors.New("too many incorrect email verification codes; please request a new reset email")
+				}
+				return uuid.Nil, auditBizID, "", errors.New("verification failed: incorrect email verification code")
+			}
+			idCopy := rec.ID
+			matchedResetTokenID = &idCopy
+			actorLabel = user.FullName + " (Email OTP)"
+		}
 	case "current_password":
 		if strings.TrimSpace(req.CurrentPassword) == "" {
 			return uuid.Nil, auditBizID, "", errors.New("current password is required")
@@ -1168,6 +1326,10 @@ func (a *AuthUsecase) ResetPasswordWithVerification(ctx context.Context, req Res
 		PasswordHash: string(hashBytes),
 	}); err != nil {
 		return uuid.Nil, auditBizID, "", err
+	}
+	if matchedResetTokenID != nil {
+		_ = a.queries.MarkPasswordResetTokenUsed(ctx, *matchedResetTokenID)
+		_ = a.queries.InvalidateUnusedPasswordResetTokens(ctx, user.ID)
 	}
 	for _, bizCtx := range contexts {
 		_, _ = a.RevokeAllUserSessions(ctx, bizCtx.BusinessID, user.ID, user.ID, "password_reset")
