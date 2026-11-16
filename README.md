@@ -209,12 +209,14 @@ POS/
 │   ├── nginx.conf
 │   ├── package.json
 │   └── vite.config.ts
+├── docker/
+│   └── pgadmin/servers.json               # Pre-registered PostgreSQL connection for pgAdmin 4
 ├── docs/                                  # System Design Document (sdd.md) & UI design context
 ├── UIUX/                                  # Design system specification
 ├── ARCHITECTURE.md                        # Full GitHub-readable architecture guide & Mermaid diagrams
 ├── .env.example                           # Documented environment variable template (copy to .env)
 ├── .gitignore                             # Excludes .env, node_modules, dist, .vite, and agent files
-└── docker-compose.yml                     # PostgreSQL 16 + Redis 7.2 + Go API + Nginx Frontend
+└── docker-compose.yml                     # PostgreSQL 16 + Redis 7.2 + Go API + Nginx Frontend + pgAdmin 4
 ```
 
 ---
@@ -260,6 +262,9 @@ cp .env.example .env
 | `SMTP_USER` | *(your SMTP username)* | SMTP authentication username (leave blank for unauthenticated local Mailpit) |
 | `SMTP_PASSWORD` | *(your SMTP password / App Password)* | SMTP authentication password |
 | `SMTP_FROM` | `"KOVA POS <no-reply@kovapos.local>"` | Email `From` display name & envelope sender address |
+| `PGADMIN_PORT` | `5050` | Host port exposed for the pgAdmin 4 web console |
+| `PGADMIN_DEFAULT_EMAIL` | `admin@kovapos.com` | Default pgAdmin 4 login email |
+| `PGADMIN_DEFAULT_PASSWORD` | `Kova@2026!` | Default pgAdmin 4 login password |
 
 > **Security & Local Email Testing Note:** Never commit your `.env` file with real production secrets. `.env` is ignored in `.gitignore`, while `.env.example` provides safe templates. To test password reset emails locally without an external SMTP account, run `docker compose --profile dev-mail up -d mailpit` (sets SMTP on `localhost:1025` and web inbox at `http://localhost:8025`) with `SMTP_HOST=localhost` and `SMTP_PORT=1025` in `.env`.
 
@@ -274,6 +279,7 @@ docker compose up --build
 - **Frontend (Nginx):** `http://localhost:5173`
 - **Backend API & Healthcheck:** `http://localhost:8080/api/v1/health`
 - **PostgreSQL 16:** `localhost:5432`
+- **pgAdmin 4 Console:** `http://localhost:5050` *(Sign in with `admin@kovapos.com` / `Kova@2026!` — pre-connected to `KOVA POS PostgreSQL (Master + Tenants)` showing `enterprise_pos` and all `pos_tenant_*` DBs)*
 - **Redis 7.2:** `localhost:6379`
 
 Docker automatically runs `000001_init_3nf_schema.up.sql`, `000002_seed_demo_data.up.sql`, and applies all subsequent migrations (`000003`–`000013`) on backend startup, including provisioning the default isolated tenant DB (`pos_tenant_zona_retail`).
