@@ -302,7 +302,7 @@ Docker automatically runs `000001_init_3nf_schema.up.sql`, `000002_seed_demo_dat
 | Portal / Route | Default Account(s) | Notes |
 | :--- | :--- | :--- |
 | **Company Staff Login** (`/login` or `/c/zona-retail/login`) | `owner@zonaretail.com` · `manager@zonaretail.com` · `cashier@zonaretail.com` · `accountant@zonaretail.com` · `inventory@zonaretail.com` | Demo password: `Zona@2026!` · Supervisor 6-digit PIN: `123456` |
-| **Platform SuperAdmin Control Plane** (`/admin/login`) | `admin@zonaplatform.com` | Demo password: `Zona@2026!` *(Manages isolated company DBs, global audit logs & root sessions)* |
+| **Platform SuperAdmin Control Plane** (`/admin/login`) | `admin@kovapos.com` | Demo password: `Kova@2026!` *(KOVA Admin Team only — manages isolated company DBs, global audit logs & root sessions)* |
 
 ---
 
