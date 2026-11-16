@@ -48,6 +48,11 @@ func AuthMiddleware(authUC *usecase.AuthUsecase) fiber.Handler {
 // TenantAuthMiddleware verifies a TENANT JWT, enforces database-per-company isolation, and binds its *tenant.TenantBundle.
 func TenantAuthMiddleware(masterAuth *usecase.AuthUsecase, resolver TenantBundleResolver) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if strings.HasPrefix(c.Path(), "/api/v1/admin") {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "admin endpoint not found",
+			})
+		}
 		authHeader := c.Get("Authorization")
 		tokenStr := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		if tokenStr == "" || tokenStr == authHeader {

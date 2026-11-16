@@ -125,9 +125,9 @@ func TestPlatformAndTenantTokenScopeIsolation(t *testing.T) {
 	platformTok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, usecase.PlatformAdminJWTClaims{
 		TokenScope: "PLATFORM_ADMIN",
 		AdminID:    adminID.String(),
-		Email:      "admin@zonaplatform.com",
-		FullName:   "Platform Root Admin",
-		Title:      "Platform SuperAdmin",
+		Email:      "admin@kovapos.com",
+		FullName:   "Kova Root Admin",
+		Title:      "Kova Platform SuperAdmin",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
@@ -177,6 +177,16 @@ func TestPlatformAndTenantTokenScopeIsolation(t *testing.T) {
 	resp4, _ := app.Test(req4)
 	if resp4.StatusCode != fiber.StatusOK {
 		t.Fatalf("expected 200 for platform token on admin endpoint, got %d", resp4.StatusCode)
+	}
+
+	// 4. Unmatched /api/v1/admin/* paths hitting TenantAuthMiddleware must return 404 (not 401 forced admin logout)
+	appTenantGuard := fiber.New()
+	appTenantGuard.Use("/api/v1", TenantAuthMiddleware(authUC, nil))
+	req5 := httptest.NewRequest("GET", "/api/v1/admin/unknown-probe", nil)
+	req5.Header.Set("Authorization", "Bearer "+platformTok)
+	resp5, _ := appTenantGuard.Test(req5)
+	if resp5.StatusCode != fiber.StatusNotFound {
+		t.Fatalf("expected 404 when unmatched /api/v1/admin/* hits TenantAuthMiddleware, got %d", resp5.StatusCode)
 	}
 }
 
