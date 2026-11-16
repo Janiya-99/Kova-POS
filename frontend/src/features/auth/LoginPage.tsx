@@ -12,13 +12,15 @@ import {
   Mail,
   Moon,
   Send,
+  ShieldCheck,
+  Store,
   Sun,
+  Zap,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
-import { KovaLogo } from '@/components/brand/KovaLogo';
-import { KovaAuthBackdrop } from '@/components/brand/KovaAuthBackdrop';
+import { KovaAuthSplitLayout } from '@/components/brand/KovaAuthSplitLayout';
 import {
   Select,
   SelectContent,
@@ -398,195 +400,208 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
 
   const showWorkspaceSelect = !cleanSlug && companies.length > 1;
 
+  const brandDisplayName =
+    (cleanSlug ? publicBranding?.trade_name || publicBranding?.name : '') || 'Kova POS';
+
   return (
-    <div
-      className="relative min-h-screen w-full bg-canvas text-ink flex flex-col justify-between p-4 sm:p-6 overflow-x-hidden"
-      data-testid="company-login-page"
-    >
-      {/* Unique KOVA Architectural Backdrop */}
-      <KovaAuthBackdrop colorMode={colorMode} />
+    <>
+      <KovaAuthSplitLayout
+        colorMode={colorMode}
+        testId="company-login-page"
+        brandTitle={brandDisplayName}
+        brandSubtitle={cleanSlug ? `/c/${cleanSlug}` : 'All-Terrain POS & ERP'}
+        showcaseBadge="Counter Ready"
+        showcaseHeadline="Effortless at the counter. Powerful behind the scenes."
+        showcaseDescription="Lightning-fast checkout, offline edge resilience, multi-branch stock intelligence, and real-time double-entry accounting across cafes, retail, and hardware stores."
+        showcaseMetrics={[
+          {
+            icon: <Zap className="h-3.5 w-3.5" />,
+            label: 'Edge Engine',
+            value: 'Offline-First Sync',
+            tone: 'default',
+          },
+          {
+            icon: <ShieldCheck className="h-3.5 w-3.5" />,
+            label: 'Security Scope',
+            value: 'Isolated Tenant DB',
+            tone: 'positive',
+          },
+        ]}
+        showcaseFootnoteTitle="UNIFIED TERMINAL & ERP WORKSPACE"
+        showcaseFootnoteText="Role-scoped JWT sessions, supervisor PIN overrides, FIFO batch costing, and real-time thermal hardware integration."
+        topControls={
+          <>
+            <div className="inline-flex items-center gap-1 rounded-full border border-border-theme/80 bg-surface/85 backdrop-blur-md px-2 py-1 shadow-xs">
+              <Globe className="h-3.5 w-3.5 text-ink-muted ml-1 mr-0.5" />
+              {SUPPORTED_LANGUAGES.map((lang) => (
+                <button
+                  key={lang.code}
+                  type="button"
+                  onClick={() => setLanguage(lang.code)}
+                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition cursor-pointer ${
+                    language === lang.code
+                      ? 'bg-contrast text-contrast-fg'
+                      : 'text-ink-muted hover:text-ink'
+                  }`}
+                >
+                  {lang.shortCode}
+                </button>
+              ))}
+            </div>
 
-      {/* Minimal Top Utility Bar (Language & Appearance) */}
-      <header className="relative z-10 mx-auto flex w-full max-w-5xl items-center justify-end gap-2 pt-1">
-        <div className="inline-flex items-center gap-1 rounded-full border border-border-theme/80 bg-surface/85 backdrop-blur-md px-2 py-1 shadow-xs">
-          <Globe className="h-3.5 w-3.5 text-ink-muted ml-1 mr-0.5" />
-          {SUPPORTED_LANGUAGES.map((lang) => (
             <button
-              key={lang.code}
               type="button"
-              onClick={() => setLanguage(lang.code)}
-              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition cursor-pointer ${
-                language === lang.code
-                  ? 'bg-contrast text-contrast-fg'
-                  : 'text-ink-muted hover:text-ink'
-              }`}
+              onClick={toggleColorMode}
+              aria-label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border-theme/80 bg-surface/85 backdrop-blur-md text-ink-muted hover:text-ink transition shadow-xs cursor-pointer"
             >
-              {lang.shortCode}
+              {colorMode === 'dark' ? (
+                <Sun className="h-3.5 w-3.5" />
+              ) : (
+                <Moon className="h-3.5 w-3.5" />
+              )}
             </button>
-          ))}
-        </div>
+          </>
+        }
+        formHeaderEyebrow={
+          <>
+            <Store className="h-3.5 w-3.5" />
+            <span>{cleanSlug ? `Portal · ${brandDisplayName}` : 'Staff Terminal Access'}</span>
+          </>
+        }
+        formHeaderBadge="Encrypted Session"
+        formTitle={t.login.signInTitle}
+        formDescription="Enter your staff credentials to access your branch terminal, registers, and live operations."
+        formFooter={
+          <div className="rounded-[14px] border border-border-theme/70 bg-surface-muted/45 px-4 py-3 text-[11.5px] text-ink-muted flex items-center justify-between gap-2">
+            <span>Protected by encrypted session &amp; rate-limit guard</span>
+            <ShieldCheck className="h-4 w-4 shrink-0 text-accent" />
+          </div>
+        }
+      >
+        {token && context?.company_slug && (
+          <div className="flex items-center justify-between gap-2 rounded-[var(--theme-radius-inner)] border border-[#22C55E]/30 bg-[#22C55E]/10 px-3.5 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[11px] font-bold text-ink truncate">
+                Active session: {context.full_name}
+              </p>
+              <p className="truncate text-[10.5px] text-ink-muted">{context.email}</p>
+            </div>
+            <Button
+              type="button"
+              size="xs"
+              variant="default"
+              onClick={() => onNavigatePath('/overview')}
+            >
+              Continue
+            </Button>
+          </div>
+        )}
 
-        <button
-          type="button"
-          onClick={toggleColorMode}
-          aria-label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border-theme/80 bg-surface/85 backdrop-blur-md text-ink-muted hover:text-ink transition shadow-xs cursor-pointer"
-        >
-          {colorMode === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-        </button>
-      </header>
-
-      {/* Centered Clean Elevated Sign-In Card */}
-      <main className="relative z-10 mx-auto my-auto w-full max-w-[420px] py-8">
-        {/* Clean Kova POS Brand Identity Lockup */}
-        <div className="mb-6 flex flex-col items-center text-center">
-          <KovaLogo
-            layout="stacked"
-            subtitle="Sign in to access your POS & operations workspace"
-          />
-        </div>
-
-        {/* Minimal Elevated Auth Form Card */}
-        <section className="rounded-[24px] border border-border-theme/85 bg-surface/92 backdrop-blur-xl p-6 sm:p-8 shadow-[0_24px_60px_-14px_rgba(15,23,42,0.12)] space-y-5">
-          {token && context?.company_slug && (
-            <div className="flex items-center justify-between gap-2 rounded-[var(--theme-radius-inner)] border border-[#22C55E]/30 bg-[#22C55E]/10 px-3.5 py-2.5">
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold text-ink truncate">
-                  Active session: {context.full_name}
-                </p>
-                <p className="truncate text-[10.5px] text-ink-muted">
-                  {context.email}
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="xs"
-                variant="default"
-                onClick={() => onNavigatePath('/overview')}
-              >
-                Continue
-              </Button>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {showWorkspaceSelect && (
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-ink">Workspace</label>
+              <Select value={targetSlug} onValueChange={setSelectedSlug}>
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Select workspace" />
+                </SelectTrigger>
+                <SelectContent>
+                  {companies.map((comp) => (
+                    <SelectItem key={comp.id} value={normalizeCompanySlug(comp.slug)}>
+                      {comp.trade_name || comp.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {showWorkspaceSelect && (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-ink">
-                  Workspace
-                </label>
-                <Select value={targetSlug} onValueChange={setSelectedSlug}>
-                  <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Select workspace" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {companies.map((comp) => (
-                      <SelectItem key={comp.id} value={normalizeCompanySlug(comp.slug)}>
-                        {comp.trade_name || comp.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+          <div className="space-y-1.5">
+            <label htmlFor="login-email" className="block text-xs font-semibold text-ink">
+              {t.login.staffEmail}
+            </label>
+            <div className="relative">
+              <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+              <Input
+                id="login-email"
+                type="email"
+                autoComplete="email"
+                placeholder="name@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-11 pl-10"
+                required
+              />
+            </div>
+          </div>
 
-            <div className="space-y-1.5">
-              <label htmlFor="login-email" className="block text-xs font-semibold text-ink">
-                {t.login.staffEmail}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="login-password" className="block text-xs font-semibold text-ink">
+                {t.login.password}
               </label>
-              <div className="relative">
-                <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-                <Input
-                  id="login-email"
-                  type="email"
-                  autoComplete="email"
-                  placeholder="name@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="h-11 pl-10"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <label htmlFor="login-password" className="block text-xs font-semibold text-ink">
-                  {t.login.password}
-                </label>
-                <button
-                  type="button"
-                  onClick={openResetModal}
-                  data-testid="open-reset-password-btn"
-                  className="text-[11.5px] font-semibold text-accent hover:underline cursor-pointer"
-                >
-                  Reset Password?
-                </button>
-              </div>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
-                <Input
-                  id="login-password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="h-11 pl-10 pr-10"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  data-testid="toggle-login-password-btn"
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-7 w-7 items-center justify-center rounded-lg text-ink-muted hover:text-ink hover:bg-surface-muted transition cursor-pointer"
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-
-            {cooldownSec > 0 && (
-              <div className="flex items-center gap-2 rounded-[var(--theme-radius-inner)] border border-[#EF4444]/30 bg-[#EF4444]/10 px-3 py-2 text-[11.5px] font-semibold text-[#EF4444]">
-                <Lock className="h-3.5 w-3.5 shrink-0" />
-                <span className="tabular-nums">
-                  Too many attempts — retry in {cooldownSec}s
-                </span>
-              </div>
-            )}
-
-            <div className="pt-1.5">
-              <DynamicButton
-                type="submit"
-                variant="obsidian"
-                loading={loading || brandingLoading}
-                disabled={cooldownSec > 0}
-                className="w-full h-11 text-[13px]"
-                data-testid="login-submit-btn"
+              <button
+                type="button"
+                onClick={openResetModal}
+                data-testid="open-reset-password-btn"
+                className="text-[11.5px] font-semibold text-accent hover:underline cursor-pointer"
               >
-                {cooldownSec > 0 ? (
-                  `Retry in ${cooldownSec}s`
-                ) : (
-                  <span className="inline-flex items-center gap-2">
-                    <span>{t.login.signInButton}</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </span>
-                )}
-              </DynamicButton>
+                Reset Password?
+              </button>
             </div>
-          </form>
-        </section>
+            <div className="relative">
+              <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+              <Input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-11 pl-10 pr-10"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                data-testid="toggle-login-password-btn"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 inline-flex h-7 w-7 items-center justify-center rounded-lg text-ink-muted hover:text-ink hover:bg-surface-muted transition cursor-pointer"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
 
-        {/* Quiet Minimal Trust Indicator */}
-        <p className="mt-5 text-center text-[11.5px] text-ink-muted">
-          Protected by encrypted session &amp; rate-limit guard
-        </p>
-      </main>
+          {cooldownSec > 0 && (
+            <div className="flex items-center gap-2 rounded-[var(--theme-radius-inner)] border border-[#EF4444]/30 bg-[#EF4444]/10 px-3 py-2 text-[11.5px] font-semibold text-[#EF4444]">
+              <Lock className="h-3.5 w-3.5 shrink-0" />
+              <span className="tabular-nums">Too many attempts — retry in {cooldownSec}s</span>
+            </div>
+          )}
 
-      <footer className="relative z-10 pb-1 text-center text-[11px] text-ink-muted/75">
-        Kova POS · Modern Point of Sale &amp; Accounting
-      </footer>
+          <div className="pt-1.5">
+            <DynamicButton
+              type="submit"
+              variant="obsidian"
+              loading={loading || brandingLoading}
+              disabled={cooldownSec > 0}
+              className="w-full h-11 text-[13px]"
+              data-testid="login-submit-btn"
+            >
+              {cooldownSec > 0 ? (
+                `Retry in ${cooldownSec}s`
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <span>{t.login.signInButton}</span>
+                  <ArrowRight className="h-4 w-4" />
+                </span>
+              )}
+            </DynamicButton>
+          </div>
+        </form>
+      </KovaAuthSplitLayout>
 
       {/* Password Reset Verification Dialog */}
       <Dialog
@@ -847,6 +862,6 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
