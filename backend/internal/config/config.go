@@ -15,6 +15,12 @@ type Config struct {
 	JWTSecret        string
 	PinTokenSecret   string
 	CORSAllowOrigins string
+	SMTPHost         string
+	SMTPPort         string
+	SMTPUser         string
+	SMTPPassword     string
+	SMTPFrom         string
+	AppBaseURL       string
 }
 
 // Load loads optional .env files first (without overwriting real OS environment
@@ -28,6 +34,12 @@ func Load() Config {
 		JWTSecret:        getEnv("JWT_SECRET", "zona-pro-enterprise-pos-jwt-secret-2026"),
 		PinTokenSecret:   getEnv("PIN_TOKEN_SECRET", "zona-pro-supervisor-pin-secret-2026"),
 		CORSAllowOrigins: getEnv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"),
+		SMTPHost:         getEnv("SMTP_HOST", ""),
+		SMTPPort:         getEnv("SMTP_PORT", "587"),
+		SMTPUser:         getEnv("SMTP_USER", ""),
+		SMTPPassword:     getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:         getEnv("SMTP_FROM", "KOVA POS <no-reply@kovapos.local>"),
+		AppBaseURL:       getEnv("APP_BASE_URL", "http://localhost:5173"),
 	}
 }
 
