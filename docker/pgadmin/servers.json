@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "KOVA POS PostgreSQL (Master + Tenants)",
+      "Group": "KOVA POS",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "enterprise_pos",
+      "Username": "pos_admin",
+      "PassFile": "/tmp/pgpass",
+      "SSLMode": "prefer"
+    }
+  }
+}

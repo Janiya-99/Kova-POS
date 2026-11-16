@@ -87,6 +87,34 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: enterprise_pos_pgadmin
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        printf 'postgres:5432:*:%s:%s\n' "$${POSTGRES_USER:-pos_admin}" "$${POSTGRES_PASSWORD:-pos_secret}" > /tmp/pgpass
+        chmod 600 /tmp/pgpass
+        exec /entrypoint.sh
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "${PGADMIN_DEFAULT_EMAIL:-admin@kovapos.com}"
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_DEFAULT_PASSWORD:-Kova@2026!}"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_SERVER_JSON_FILE: "/pgadmin4/servers.json"
+      POSTGRES_USER: "${POSTGRES_USER:-pos_admin}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-pos_secret}"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pg_data:
   redis_data:
+  pgadmin_data:
