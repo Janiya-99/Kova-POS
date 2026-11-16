@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-01-pos-terminal">
+  <defs>
+    <linearGradient id="kovaAccent" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00C8F0"/>
+      <stop offset="50%" stop-color="#4F9BFF"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="kovaFill" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4F9BFF" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+  <rect width="20" height="14" x="2" y="3" rx="2" fill="url(#kovaFill)" stroke="#F8FAFC"/>
+        <path d="M6 7h6" stroke="url(#kovaAccent)"/>
+        <path d="M6 11h4" stroke="url(#kovaAccent)"/>
+        <rect width="4" height="6" x="14" y="7" rx="1" stroke="url(#kovaAccent)"/>
+        <line x1="8" x2="16" y1="21" y2="21" stroke="#F8FAFC"/>
+        <line x1="12" x2="12" y1="17" y2="21" stroke="url(#kovaAccent)"/>
+</svg>

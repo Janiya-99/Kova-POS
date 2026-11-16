@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-06-inventory">
+  <defs>
+    <linearGradient id="kovaAccent" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00C8F0"/>
+      <stop offset="50%" stop-color="#4F9BFF"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <linearGradient id="kovaFill" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4F9BFF" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#8B5CF6" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+  <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" fill="url(#kovaFill)" stroke="#F8FAFC"/>
+        <path d="m7.5 4.27 9 5.15" stroke="url(#kovaAccent)"/>
+        <path d="m3.3 7 8.7 5 8.7-5" stroke="#F8FAFC"/>
+        <path d="M12 22V12" stroke="url(#kovaAccent)"/>
+</svg>
