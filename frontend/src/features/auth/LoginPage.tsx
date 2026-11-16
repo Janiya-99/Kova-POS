@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { DynamicButton } from '@/components/dqnamo/DynamicButton';
 import { KovaLogo } from '@/components/brand/KovaLogo';
+import { KovaAuthBackdrop } from '@/components/brand/KovaAuthBackdrop';
 import {
   Select,
   SelectContent,
@@ -66,7 +67,7 @@ interface LoginPageProps {
 export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
   const cleanSlug = companySlug ? normalizeCompanySlug(companySlug) : '';
   const { token, context, setSession, publicBranding, setPublicBranding } = useAuthStore();
-  const { colorMode, toggleColorMode, customAccent } = useThemeStore();
+  const { colorMode, toggleColorMode } = useThemeStore();
   const { language, setLanguage, t } = useT();
 
   // Workspace companies catalog & selected slug
@@ -212,8 +213,6 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
       active = false;
     };
   }, [targetSlug, cleanSlug, setPublicBranding]);
-
-  const primaryHex = customAccent || '#10B981';
 
   React.useEffect(() => {
     if (portalNotFound) {
@@ -404,16 +403,8 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
       className="relative min-h-screen w-full bg-canvas text-ink flex flex-col justify-between p-4 sm:p-6 overflow-x-hidden"
       data-testid="company-login-page"
     >
-      {/* Subtle Ambient Brand Backdrop */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 overflow-hidden"
-      >
-        <div
-          className="absolute -top-40 left-1/2 -translate-x-1/2 h-[420px] w-[720px] rounded-full blur-3xl opacity-[0.11]"
-          style={{ background: `radial-gradient(circle, ${primaryHex} 0%, transparent 70%)` }}
-        />
-      </div>
+      {/* Unique KOVA Architectural Backdrop */}
+      <KovaAuthBackdrop colorMode={colorMode} />
 
       {/* Minimal Top Utility Bar (Language & Appearance) */}
       <header className="relative z-10 mx-auto flex w-full max-w-5xl items-center justify-end gap-2 pt-1">
@@ -456,7 +447,7 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
         </div>
 
         {/* Minimal Elevated Auth Form Card */}
-        <section className="rounded-[24px] border border-border-theme/85 bg-surface p-6 sm:p-8 shadow-[0_22px_50px_-14px_rgba(17,19,21,0.08)] space-y-5">
+        <section className="rounded-[24px] border border-border-theme/85 bg-surface/92 backdrop-blur-xl p-6 sm:p-8 shadow-[0_24px_60px_-14px_rgba(15,23,42,0.12)] space-y-5">
           {token && context?.company_slug && (
             <div className="flex items-center justify-between gap-2 rounded-[var(--theme-radius-inner)] border border-[#22C55E]/30 bg-[#22C55E]/10 px-3.5 py-2.5">
               <div className="min-w-0">
@@ -587,18 +578,10 @@ export function LoginPage({ companySlug, onNavigatePath }: LoginPageProps) {
           </form>
         </section>
 
-        {/* Quiet Minimal Footer Links */}
-        <div className="mt-5 flex items-center justify-between px-1 text-[11.5px] text-ink-muted">
-          <span>Protected by session &amp; rate-limit guard</span>
-          <button
-            type="button"
-            onClick={() => onNavigatePath('/admin/login')}
-            data-testid="directory-admin-portal-link"
-            className="font-semibold text-ink-muted hover:text-ink transition cursor-pointer"
-          >
-            Admin Portal →
-          </button>
-        </div>
+        {/* Quiet Minimal Trust Indicator */}
+        <p className="mt-5 text-center text-[11.5px] text-ink-muted">
+          Protected by encrypted session &amp; rate-limit guard
+        </p>
       </main>
 
       <footer className="relative z-10 pb-1 text-center text-[11px] text-ink-muted/75">
