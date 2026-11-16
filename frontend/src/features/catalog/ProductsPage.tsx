@@ -137,6 +137,7 @@ export function ProductsPage() {
   const [viewMode, setViewMode] = React.useState<ProductsViewMode>(readStoredViewMode);
   const [search, setSearch] = React.useState('');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('ALL');
+  const [selectedBrand, setSelectedBrand] = React.useState<string>('ALL');
   const [lowStockOnly, setLowStockOnly] = React.useState(false);
   const [policyFilter, setPolicyFilter] = React.useState<'ALL' | 'STRICT' | 'ALLOW_NEG'>('ALL');
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -186,6 +187,7 @@ export function ProductsPage() {
   };
 
   const categories = bootstrap?.categories || [];
+  const brands = bootstrap?.brands || [];
   const products = bootstrap?.products || [];
   const allowNegSetting = bootstrap?.resolved_settings?.find(
     (s) => s.key === 'pos.allow_negative_fifo_stock'
@@ -194,6 +196,7 @@ export function ProductsPage() {
     ? allowNegSetting.effective_json === 'true'
     : false;
   const categoryNameMap = new Map<string, string>(categories.map((c) => [c.id, c.name]));
+  const brandNameMap = new Map<string, string>(brands.map((b) => [b.id, b.name]));
 
   const activeProductsById = React.useMemo(
     () => new Map(products.map((p) => [p.id, p])),
@@ -264,6 +267,7 @@ export function ProductsPage() {
     () =>
       products.filter((p) => {
         if (selectedCategory !== 'ALL' && p.category_id !== selectedCategory) return false;
+        if (selectedBrand !== 'ALL' && (p.brand_id || '') !== selectedBrand) return false;
         if (lowStockOnly && Number(p.branch_stock || 0) > Number(p.reorder_point || 0)) return false;
         const allowNeg =
           p.allow_negative_stock === true ||
@@ -272,13 +276,15 @@ export function ProductsPage() {
         if (policyFilter === 'ALLOW_NEG' && !allowNeg) return false;
         if (!search.trim()) return true;
         const q = search.trim().toLowerCase();
+        const bName = (p.brand_name || brandNameMap.get(p.brand_id || '') || '').toLowerCase();
         return (
           p.name.toLowerCase().includes(q) ||
           p.sku.toLowerCase().includes(q) ||
+          bName.includes(q) ||
           (p.primary_barcode || '').toLowerCase().includes(q)
         );
       }),
-    [products, selectedCategory, lowStockOnly, policyFilter, defaultAllowNeg, search]
+    [products, selectedCategory, selectedBrand, lowStockOnly, policyFilter, defaultAllowNeg, search, brandNameMap]
   );
 
   const { sortedItems, sortConfig, setSortConfig, requestSort } = useSortableData(
@@ -286,6 +292,7 @@ export function ProductsPage() {
     { key: 'name', dir: 'asc' },
     (p, key) => {
       if (key === 'category') return categoryNameMap.get(p.category_id || '') || p.category_name || 'General';
+      if (key === 'brand') return p.brand_name || brandNameMap.get(p.brand_id || '') || 'Unbranded';
       if (key === 'allow_neg') {
         const allowNeg =
           p.allow_negative_stock === true ||
@@ -589,6 +596,25 @@ export function ProductsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {brands.length > 0 && (
+              <Select value={selectedBrand} onValueChange={setSelectedBrand}>
+                <SelectTrigger
+                  aria-label="Filter by brand"
+                  data-testid="products-brand-filter"
+                  className="h-8 w-[160px] text-[11px]"
+                >
+                  <SelectValue placeholder="All Brands" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Brands ({brands.length})</SelectItem>
+                  {brands.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             {viewMode === 'cards' && (
               <div className="flex items-center gap-1.5">
                 <Select
@@ -671,6 +697,8 @@ export function ProductsPage() {
                 const priceDelta = computePriceDelta(p);
                 const catName =
                   categoryNameMap.get(p.category_id || '') || p.category_name || 'General';
+                const brandName =
+                  p.brand_name || brandNameMap.get(p.brand_id || '') || '';
                 const gallery = Array.from(
                   new Set(
                     [p.image_url, ...(Array.isArray(p.image_urls) ? p.image_urls : [])]
@@ -778,7 +806,7 @@ export function ProductsPage() {
                             )}
                         </div>
                         <p className="mt-0.5 truncate text-[10.5px] font-medium text-ink-muted tabular-nums">
-                          {p.sku} • {catName} • Min {min}
+                          {brandName ? `${brandName} • ` : ''}{p.sku} • {catName} • Min {min}
                         </p>
                       </div>
 
@@ -837,7 +865,7 @@ export function ProductsPage() {
                     sortDir={sortConfig?.dir}
                     onSort={requestSort}
                   >
-                    Category
+                    Category &amp; Brand
                   </SortableTableHead>
                   <SortableTableHead
                     sortKey="base_price"
@@ -944,9 +972,16 @@ export function ProductsPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">
-                          {categoryNameMap.get(p.category_id || '') || p.category_name || 'General'}
-                        </Badge>
+                        <div className="flex flex-wrap items-center gap-1">
+                          {(p.brand_name || brandNameMap.get(p.brand_id || '')) && (
+                            <Badge variant="lavender">
+                              {p.brand_name || brandNameMap.get(p.brand_id || '')}
+                            </Badge>
+                          )}
+                          <Badge variant="outline">
+                            {categoryNameMap.get(p.category_id || '') || p.category_name || 'General'}
+                          </Badge>
+                        </div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-ink-muted">
                         {formatMoney(p.base_price)}
@@ -1028,6 +1063,7 @@ export function ProductsPage() {
         onOpenChange={setDrawerOpen}
         product={editingProduct}
         categories={categories}
+        brands={brands}
         defaultAllowNegativeStock={defaultAllowNeg}
         onSaved={invalidateCatalogQueries}
       />

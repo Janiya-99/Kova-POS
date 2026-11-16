@@ -1321,6 +1321,61 @@ func (h *Handler) DeleteCategory(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "DELETED", "id": catID})
 }
 
+// ListBrands returns all tenant product brands with active SKU & stock counts.
+func (h *Handler) ListBrands(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	rows, err := h.catalogUC(c).ListBrands(c.UserContext(), tc.BusinessID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"brands": rows})
+}
+
+// CreateBrand adds a product brand for the active business.
+func (h *Handler) CreateBrand(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	var req usecase.SaveBrandRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid brand payload"})
+	}
+	row, err := h.catalogUC(c).SaveBrand(c.UserContext(), tc.BusinessID, nil, req)
+	if err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"brand": row})
+}
+
+// UpdateBrand updates an existing product brand.
+func (h *Handler) UpdateBrand(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	brandID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid brand id"})
+	}
+	var req usecase.SaveBrandRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid brand payload"})
+	}
+	row, err := h.catalogUC(c).SaveBrand(c.UserContext(), tc.BusinessID, &brandID, req)
+	if err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"brand": row})
+}
+
+// DeleteBrand removes an unused product brand.
+func (h *Handler) DeleteBrand(c *fiber.Ctx) error {
+	tc, _ := middleware.GetTenantContext(c)
+	brandID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid brand id"})
+	}
+	if err := h.catalogUC(c).DeleteBrand(c.UserContext(), tc.BusinessID, brandID); err != nil {
+		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"status": "DELETED", "id": brandID})
+}
+
 // ListAccessUsers lists row-wise logins, roles, designations, branches, and PIN states strictly for company users.
 func (h *Handler) ListAccessUsers(c *fiber.Ctx) error {
 	tc, _ := middleware.GetTenantContext(c)

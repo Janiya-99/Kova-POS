@@ -78,6 +78,7 @@ const EVENT_QUERY_KEY_MAP: Record<string, string[]> = {
   CATALOG_UPDATED: [
     'products',
     'categories',
+    'brands',
     'pos-bootstrap',
     'inventory',
     'inventory-fifo',
@@ -147,6 +148,7 @@ const EVENT_QUERY_KEY_MAP: Record<string, string[]> = {
     'accounting',
     'products',
     'categories',
+    'brands',
     'customers',
     'suppliers',
     'tax-groups',
@@ -171,7 +173,11 @@ export function resolveEventFromApiPath(path: string): string | null {
   if (clean.startsWith('/api/v1/pos/checkout') || clean.startsWith('/api/v1/pos/invoices')) {
     return 'SALE_COMPLETED';
   }
-  if (clean.startsWith('/api/v1/products') || clean.startsWith('/api/v1/categories')) {
+  if (
+    clean.startsWith('/api/v1/products') ||
+    clean.startsWith('/api/v1/categories') ||
+    clean.startsWith('/api/v1/brands')
+  ) {
     return 'CATALOG_UPDATED';
   }
   if (clean.startsWith('/api/v1/customers')) return 'CUSTOMER_UPDATED';

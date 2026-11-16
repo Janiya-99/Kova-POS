@@ -32,7 +32,7 @@ import { apiFetch } from '@/lib/api';
 import { confirmDestructiveAction } from '@/lib/swal';
 import { useCurrency } from '@/hooks/useCurrency';
 import type { LocalProduct } from '@/lib/dexie-db';
-import type { POSCategory } from '../pos/types';
+import type { POSBrand, POSCategory } from '../pos/types';
 import { toast } from 'sonner';
 
 interface ProductManagementDrawerProps {
@@ -40,6 +40,7 @@ interface ProductManagementDrawerProps {
   onOpenChange: (open: boolean) => void;
   product: LocalProduct | null;
   categories: POSCategory[];
+  brands?: POSBrand[];
   defaultAllowNegativeStock: boolean;
   onSaved: () => void;
 }
@@ -51,6 +52,7 @@ export function ProductManagementDrawer({
   onOpenChange,
   product,
   categories,
+  brands = [],
   defaultAllowNegativeStock,
   onSaved,
 }: ProductManagementDrawerProps) {
@@ -60,6 +62,7 @@ export function ProductManagementDrawer({
   const [sku, setSku] = React.useState('');
   const [barcode, setBarcode] = React.useState('');
   const [categoryId, setCategoryId] = React.useState('');
+  const [brandId, setBrandId] = React.useState('NONE');
   const [unitOfMeasure, setUnitOfMeasure] = React.useState('PCS');
   const [description, setDescription] = React.useState('');
   const [costPrice, setCostPrice] = React.useState('0.00');
@@ -78,6 +81,7 @@ export function ProductManagementDrawer({
       setSku(product.sku.toUpperCase());
       setBarcode(product.primary_barcode || '');
       setCategoryId(product.category_id || categories[0]?.id || '');
+      setBrandId(product.brand_id || 'NONE');
       setUnitOfMeasure(product.unit_of_measure || 'PCS');
       setDescription(product.description || '');
       setCostPrice(Number(product.base_price || 0).toFixed(2));
@@ -104,6 +108,7 @@ export function ProductManagementDrawer({
       setSku('');
       setBarcode('');
       setCategoryId(categories[0]?.id || '');
+      setBrandId(brands[0]?.id || 'NONE');
       setUnitOfMeasure('PCS');
       setDescription('');
       setCostPrice('35.00');
@@ -114,7 +119,7 @@ export function ProductManagementDrawer({
       setNegStockMode('INHERIT');
       setImageUrls([]);
     }
-  }, [open, product, categories]);
+  }, [open, product, categories, brands]);
 
   const costNum = Number(costPrice || 0);
   const saleNum = Number(salePrice || 0);
@@ -189,6 +194,7 @@ export function ProductManagementDrawer({
     try {
       const payload = {
         category_id: categoryId,
+        brand_id: brandId && brandId !== 'NONE' ? brandId : null,
         sku: cleanSku,
         barcode: barcode.trim(),
         name: cleanName,
@@ -227,6 +233,7 @@ export function ProductManagementDrawer({
     name,
     sku,
     categoryId,
+    brandId,
     salePrice,
     saleNum,
     hasPriceLoss,
@@ -385,6 +392,23 @@ export function ProductManagementDrawer({
                     {categories.map((c) => (
                       <SelectItem key={c.id} value={c.id}>
                         {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] font-semibold text-ink">Brand</label>
+                <Select value={brandId} onValueChange={setBrandId}>
+                  <SelectTrigger data-testid="product-brand-select">
+                    <SelectValue placeholder="Choose brand" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NONE">Unbranded / Generic</SelectItem>
+                    {brands.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name}
                       </SelectItem>
                     ))}
                   </SelectContent>

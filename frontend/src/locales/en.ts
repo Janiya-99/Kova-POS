@@ -48,6 +48,7 @@ export const en = {
     catalog: 'Catalog',
     products: 'Products',
     categories: 'Categories',
+    brands: 'Brands',
     customers: 'Customers',
     procurement: 'Procurement',
     suppliers: 'Suppliers',
@@ -75,6 +76,10 @@ export const en = {
     '/categories': {
       title: 'Product Categories',
       subtitle: 'Menu taxonomy, merchandising segments & category inheritance',
+    },
+    '/brands': {
+      title: 'Brands & Manufacturers',
+      subtitle: 'Brand-wise hardware catalog, OEM origins & SKU portfolios',
     },
     '/customers': {
       title: 'Customers & CRM',

@@ -30,6 +30,9 @@ export interface LocalProduct {
   business_id: string;
   category_id: string;
   category_name: string;
+  brand_id?: string | null;
+  brand_name?: string;
+  brand_slug?: string;
   gender_segment: string;
   effective_tax_group_id?: string | null;
   sku: string;

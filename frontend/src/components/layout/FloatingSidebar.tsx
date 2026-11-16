@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+  Award,
   Boxes,
   Tags,
   BarChart3,
@@ -35,6 +36,7 @@ export type AppRoute =
   | '/pos'
   | '/products'
   | '/categories'
+  | '/brands'
   | '/customers'
   | '/suppliers'
   | '/inventory'
@@ -78,7 +80,7 @@ function SidebarTooltip({
 }
 
 function findGroupForRoute(route: AppRoute): string | null {
-  if (route === '/products' || route === '/categories') return 'catalog';
+  if (route === '/products' || route === '/categories' || route === '/brands') return 'catalog';
   if (route === '/suppliers' || route === '/inventory') return 'supply';
   if (route === '/reports' || route === '/accounting') return 'finance';
   return null;
@@ -182,6 +184,15 @@ export function FloatingSidebar({
             description: t.routes['/categories'].subtitle,
             shortcut: '4',
             icon: Tags,
+            perm: 'catalog:view',
+          },
+          {
+            route: '/brands',
+            label: t.nav.brands,
+            fullLabel: t.nav.brands,
+            description: t.routes['/brands'].subtitle,
+            shortcut: 'B',
+            icon: Award,
             perm: 'catalog:view',
           },
         ],
@@ -727,6 +738,7 @@ export function FloatingSidebar({
             activeRoute === '/settings' ||
               activeRoute === '/products' ||
               activeRoute === '/categories' ||
+              activeRoute === '/brands' ||
               activeRoute === '/customers' ||
               activeRoute === '/reports'
               ? 'bg-[var(--theme-sidebar-active-bg)] text-[var(--theme-sidebar-active-fg)]'

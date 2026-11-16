@@ -19,41 +19,42 @@ WHERE business_id = $1 AND id = $2 AND is_walk_in = FALSE;
 
 -- name: CreateProduct :one
 INSERT INTO products (
-    business_id, category_id, business_category_id, tax_group_id,
+    business_id, category_id, business_category_id, brand_id, tax_group_id,
     sku, name, description, image_url, image_urls, unit_of_measure,
     base_price, sale_price, discount_percent, reorder_point, reorder_qty, allow_negative_stock,
     enable_serial_tracking, is_service_labor, allow_fractional_qty,
     variants_json, modifiers_json, uom_options_json, warranty_terms
 )
-VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-RETURNING id, business_id, category_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived;
+VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+RETURNING id, business_id, category_id, brand_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived;
 
 -- name: UpdateProduct :one
 UPDATE products
 SET
     category_id = $3,
     business_category_id = $3,
-    sku = $4,
-    name = $5,
-    description = $6,
-    image_url = $7,
-    image_urls = $8,
-    unit_of_measure = $9,
-    base_price = $10,
-    sale_price = $11,
-    discount_percent = $12,
-    reorder_point = $13,
-    reorder_qty = $14,
-    allow_negative_stock = $15,
-    enable_serial_tracking = $16,
-    is_service_labor = $17,
-    allow_fractional_qty = $18,
-    variants_json = $19,
-    modifiers_json = $20,
-    uom_options_json = $21,
-    warranty_terms = $22
+    brand_id = $4,
+    sku = $5,
+    name = $6,
+    description = $7,
+    image_url = $8,
+    image_urls = $9,
+    unit_of_measure = $10,
+    base_price = $11,
+    sale_price = $12,
+    discount_percent = $13,
+    reorder_point = $14,
+    reorder_qty = $15,
+    allow_negative_stock = $16,
+    enable_serial_tracking = $17,
+    is_service_labor = $18,
+    allow_fractional_qty = $19,
+    variants_json = $20,
+    modifiers_json = $21,
+    uom_options_json = $22,
+    warranty_terms = $23
 WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, category_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived;
+RETURNING id, business_id, category_id, brand_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived;
 
 -- name: BulkUpdateProductDiscount :many
 UPDATE products
@@ -257,6 +258,59 @@ SELECT EXISTS (
 
 -- name: DeleteCategory :exec
 DELETE FROM categories
+WHERE business_id = $1 AND id = $2;
+
+-- name: ListBrandsWithCounts :many
+SELECT
+    b.id,
+    b.business_id,
+    b.name,
+    b.slug,
+    b.country,
+    b.website,
+    b.logo_url,
+    b.description,
+    b.is_active,
+    b.created_at,
+    COUNT(p.id) FILTER (WHERE p.is_archived = FALSE)::INT AS product_count,
+    COALESCE(SUM(CASE WHEN p.is_archived = FALSE THEN stock.qty ELSE 0 END), 0)::NUMERIC(19,4) AS total_stock
+FROM brands b
+LEFT JOIN products p ON p.brand_id = b.id AND p.business_id = b.business_id
+LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(ib.remaining_qty), 0)::NUMERIC(19,4) AS qty
+    FROM inventory_batches ib
+    WHERE ib.business_id = b.business_id AND ib.product_id = p.id AND ib.remaining_qty > 0
+) stock ON TRUE
+WHERE b.business_id = $1
+GROUP BY b.id
+ORDER BY b.name ASC;
+
+-- name: CreateBrand :one
+INSERT INTO brands (business_id, name, slug, country, website, logo_url, description, is_active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, business_id, name, slug, country, website, logo_url, description, is_active, created_at;
+
+-- name: UpdateBrand :one
+UPDATE brands
+SET
+    name = $3,
+    slug = $4,
+    country = $5,
+    website = $6,
+    logo_url = $7,
+    description = $8,
+    is_active = $9
+WHERE business_id = $1 AND id = $2
+RETURNING id, business_id, name, slug, country, website, logo_url, description, is_active, created_at;
+
+-- name: CheckBrandUsage :one
+SELECT EXISTS (
+    SELECT 1 FROM products p
+    WHERE p.business_id = $1 AND p.brand_id = $2 AND p.is_archived = FALSE
+)::BOOLEAN AS has_products;
+
+-- name: DeleteBrand :exec
+DELETE FROM brands
 WHERE business_id = $1 AND id = $2;
 
 -- name: ListBusinessAccessUsers :many

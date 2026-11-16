@@ -57,6 +57,20 @@ func TestIndustryPresetsAndStarterCategories(t *testing.T) {
 		if len(cats) < 2 {
 			t.Fatalf("expected at least 2 starter categories for %q", industry)
 		}
+		brands := BlueprintForIndustry(industry).Brands
+		if len(brands) < 5 {
+			t.Fatalf("expected at least 5 starter brands for %q", industry)
+		}
+	}
+
+	mobileBrands := map[string]bool{}
+	for _, b := range BlueprintForIndustry("mobile").Brands {
+		mobileBrands[b.Name] = true
+	}
+	for _, req := range []string{"Apple", "OPPO", "Infinix", "Soundcore"} {
+		if !mobileBrands[req] {
+			t.Fatalf("expected mobile blueprint starter brand %q", req)
+		}
 	}
 
 	restFlags := IndustryPresetFlags("restaurant")

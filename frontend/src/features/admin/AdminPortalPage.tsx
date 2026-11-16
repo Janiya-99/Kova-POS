@@ -1700,6 +1700,21 @@ export function AdminPortalPage() {
                       ))}
                     </div>
                   </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted">
+                      Migrated Starter Brands ({activeBlueprint.brands.length})
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {activeBlueprint.brands.map((br) => (
+                        <span
+                          key={br}
+                          className="inline-flex items-center rounded-md border border-accent/30 bg-accent-soft/45 px-1.5 py-0.5 text-[10px] font-semibold text-accent-soft-fg"
+                        >
+                          {br}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

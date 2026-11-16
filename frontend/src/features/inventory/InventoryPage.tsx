@@ -36,6 +36,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   DataTablePagination,
   usePagination,
   useSortableData,
@@ -256,6 +263,7 @@ export function InventoryPage() {
   const [editingProduct, setEditingProduct] = React.useState<LocalProduct | null>(null);
   const [catalogSearch, setCatalogSearch] = React.useState('');
   const [selectedCategory, setSelectedCategory] = React.useState('ALL');
+  const [selectedBrand, setSelectedBrand] = React.useState('ALL');
   const [stockFilter, setStockFilter] = React.useState<'ALL' | 'LOW' | 'OUT'>('ALL');
   const [batchFilter, setBatchFilter] = React.useState<'ALL' | 'IN_STOCK' | 'LOW' | 'DEPLETED'>('ALL');
   const [grnStatusFilter, setGrnStatusFilter] = React.useState<'ALL' | 'DRAFT' | 'APPROVED'>('ALL');
@@ -305,11 +313,13 @@ export function InventoryPage() {
 
   const products = bootstrap?.products || [];
   const categories = bootstrap?.categories || [];
+  const brands = bootstrap?.brands || [];
 
   const filteredProducts = React.useMemo(() => {
     const q = catalogSearch.trim().toLowerCase();
     return products.filter((p) => {
       if (selectedCategory !== 'ALL' && p.category_id !== selectedCategory) return false;
+      if (selectedBrand !== 'ALL' && (p.brand_id || '') !== selectedBrand) return false;
       const qty = Number(p.branch_stock || 0);
       if (stockFilter === 'LOW' && (qty <= 0 || qty > Number(p.reorder_point || 10))) return false;
       if (stockFilter === 'OUT' && qty > 0) return false;
@@ -317,10 +327,11 @@ export function InventoryPage() {
       return (
         p.name.toLowerCase().includes(q) ||
         p.sku.toLowerCase().includes(q) ||
+        (p.brand_name || '').toLowerCase().includes(q) ||
         (p.primary_barcode || '').toLowerCase().includes(q)
       );
     });
-  }, [products, selectedCategory, stockFilter, catalogSearch]);
+  }, [products, selectedCategory, selectedBrand, stockFilter, catalogSearch]);
 
   const filteredBatches = React.useMemo(() => {
     const list = data?.batches || [];
@@ -657,6 +668,27 @@ export function InventoryPage() {
                       </button>
                     ))}
                   </div>
+
+                  {brands.length > 0 && (
+                    <div className="space-y-1.5 pt-2 border-t border-border-theme/70">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-ink-muted">
+                        Brand Filter
+                      </p>
+                      <Select value={selectedBrand} onValueChange={setSelectedBrand}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="All Brands" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All Brands ({brands.length})</SelectItem>
+                          {brands.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </aside>
 
                 {/* Right Clean Product Rows & Edit Actions */}
@@ -742,7 +774,12 @@ export function InventoryPage() {
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <Badge variant="outline">{p.category_name}</Badge>
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {p.brand_name && (
+                                    <Badge variant="lavender">{p.brand_name}</Badge>
+                                  )}
+                                  <Badge variant="outline">{p.category_name}</Badge>
+                                </div>
                               </TableCell>
                               <TableCell className="text-right">
                                 <Badge
@@ -1506,6 +1543,7 @@ export function InventoryPage() {
         onOpenChange={setProductDrawerOpen}
         product={editingProduct}
         categories={categories}
+        brands={brands}
         defaultAllowNegativeStock={defaultAllowNegativeStock}
         onSaved={() => {
           refetchBootstrap();

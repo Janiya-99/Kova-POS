@@ -16,7 +16,7 @@ import (
 
 const getProductByID = `-- name: GetProductByID :one
 SELECT
-    p.id, p.business_id, p.category_id, p.tax_group_id,
+    p.id, p.business_id, p.category_id, p.brand_id, p.tax_group_id,
     c.tax_group_id AS category_tax_group_id,
     p.sku, p.name, p.base_price, p.sale_price, p.discount_percent,
     p.reorder_point, p.reorder_qty,
@@ -37,6 +37,7 @@ type GetProductByIDRow struct {
 	ID                   uuid.UUID       `json:"id"`
 	BusinessID           uuid.UUID       `json:"business_id"`
 	CategoryID           uuid.UUID       `json:"category_id"`
+	BrandID              uuid.NullUUID   `json:"brand_id"`
 	TaxGroupID           uuid.NullUUID   `json:"tax_group_id"`
 	CategoryTaxGroupID   uuid.NullUUID   `json:"category_tax_group_id"`
 	Sku                  string          `json:"sku"`
@@ -62,6 +63,7 @@ func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) 
 		&i.ID,
 		&i.BusinessID,
 		&i.CategoryID,
+		&i.BrandID,
 		&i.TaxGroupID,
 		&i.CategoryTaxGroupID,
 		&i.Sku,
@@ -80,6 +82,55 @@ func (q *Queries) GetProductByID(ctx context.Context, arg GetProductByIDParams) 
 		&i.WarrantyTerms,
 	)
 	return i, err
+}
+
+const listBrandsForBusiness = `-- name: ListBrandsForBusiness :many
+SELECT id, business_id, name, slug, country, website, logo_url, description, is_active
+FROM brands
+WHERE business_id = $1 AND is_active = TRUE
+ORDER BY name ASC
+`
+
+type ListBrandsForBusinessRow struct {
+	ID          uuid.UUID `json:"id"`
+	BusinessID  uuid.UUID `json:"business_id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
+	Country     string    `json:"country"`
+	Website     string    `json:"website"`
+	LogoUrl     string    `json:"logo_url"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"is_active"`
+}
+
+func (q *Queries) ListBrandsForBusiness(ctx context.Context, businessID uuid.UUID) ([]ListBrandsForBusinessRow, error) {
+	rows, err := q.db.Query(ctx, listBrandsForBusiness, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBrandsForBusinessRow{}
+	for rows.Next() {
+		var i ListBrandsForBusinessRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.Name,
+			&i.Slug,
+			&i.Country,
+			&i.Website,
+			&i.LogoUrl,
+			&i.Description,
+			&i.IsActive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCategoriesForBusiness = `-- name: ListCategoriesForBusiness :many
@@ -186,8 +237,11 @@ SELECT
     p.business_id,
     p.category_id,
     p.business_category_id,
+    p.brand_id,
     c.name AS category_name,
     c.gender_segment,
+    COALESCE(b.name, '')::TEXT AS brand_name,
+    COALESCE(b.slug, '')::TEXT AS brand_slug,
     COALESCE(p.tax_group_id, c.tax_group_id) AS effective_tax_group_id,
     p.sku,
     p.name,
@@ -220,6 +274,7 @@ SELECT
     ), 0)::NUMERIC(19,4) AS branch_stock
 FROM products p
 JOIN categories c ON c.id = p.category_id
+LEFT JOIN brands b ON b.id = p.brand_id AND b.business_id = p.business_id
 WHERE p.business_id = $1 AND p.is_active = TRUE AND p.is_archived = FALSE
 ORDER BY p.name ASC
 `
@@ -234,8 +289,11 @@ type ListProductsWithBranchStockRow struct {
 	BusinessID           uuid.UUID       `json:"business_id"`
 	CategoryID           uuid.UUID       `json:"category_id"`
 	BusinessCategoryID   uuid.NullUUID   `json:"business_category_id"`
+	BrandID              uuid.NullUUID   `json:"brand_id"`
 	CategoryName         string          `json:"category_name"`
 	GenderSegment        string          `json:"gender_segment"`
+	BrandName            string          `json:"brand_name"`
+	BrandSlug            string          `json:"brand_slug"`
 	EffectiveTaxGroupID  uuid.NullUUID   `json:"effective_tax_group_id"`
 	Sku                  string          `json:"sku"`
 	Name                 string          `json:"name"`
@@ -275,8 +333,11 @@ func (q *Queries) ListProductsWithBranchStock(ctx context.Context, arg ListProdu
 			&i.BusinessID,
 			&i.CategoryID,
 			&i.BusinessCategoryID,
+			&i.BrandID,
 			&i.CategoryName,
 			&i.GenderSegment,
+			&i.BrandName,
+			&i.BrandSlug,
 			&i.EffectiveTaxGroupID,
 			&i.Sku,
 			&i.Name,

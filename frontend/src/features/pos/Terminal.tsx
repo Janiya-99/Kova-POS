@@ -174,6 +174,7 @@ export function Terminal({
   const pos = usePOSStore();
 
   const [selectedCategory, setSelectedCategory] = React.useState<string>('ALL');
+  const [selectedBrand, setSelectedBrand] = React.useState<string>('ALL');
   const [laborPartsFilter, setLaborPartsFilter] = React.useState<LaborPartsFilter>('ALL');
   const [bundlesOnly, setBundlesOnly] = React.useState(false);
   const [search, setSearch] = React.useState('');
@@ -270,6 +271,7 @@ export function Terminal({
           return {
             products: cachedProducts,
             categories: [],
+            brands: [],
             customers: [],
             tax_rules: cachedTaxes,
             resolved_settings: cachedSettings,
@@ -364,6 +366,7 @@ export function Terminal({
 
   const products = (data?.products || []).filter((p) => !p.is_archived);
   const categories = data?.categories || [];
+  const brands = data?.brands || [];
   const customers = data?.customers || [];
   const taxRules = data?.tax_rules || [];
   const heldBills = data?.held_bills || [];
@@ -377,6 +380,7 @@ export function Terminal({
     const q = search.trim().toLowerCase();
     return products.filter((p) => {
       if (selectedCategory !== 'ALL' && p.category_id !== selectedCategory) return false;
+      if (selectedBrand !== 'ALL' && (p.brand_id || '') !== selectedBrand) return false;
       if (capabilities.splitLaborParts) {
         if (laborPartsFilter === 'LABOR' && !p.is_service_labor) return false;
         if (laborPartsFilter === 'PARTS' && Boolean(p.is_service_labor)) return false;
@@ -390,10 +394,11 @@ export function Terminal({
       return (
         p.name.toLowerCase().includes(q) ||
         p.sku.toLowerCase().includes(q) ||
+        (p.brand_name || '').toLowerCase().includes(q) ||
         (p.primary_barcode || '').toLowerCase().includes(q)
       );
     });
-  }, [products, selectedCategory, capabilities.splitLaborParts, laborPartsFilter, bundlesOnly, search]);
+  }, [products, selectedCategory, selectedBrand, capabilities.splitLaborParts, laborPartsFilter, bundlesOnly, search]);
 
   const isNegativeAllowedForProduct = React.useCallback(
     (product: LocalProduct): boolean => {
@@ -1121,6 +1126,9 @@ export function Terminal({
         >
           <ProductGrid
             products={filteredProducts}
+            brands={brands}
+            selectedBrand={selectedBrand}
+            onSelectBrand={setSelectedBrand}
             cartItems={pos.items}
             capabilities={capabilities}
             search={search}
@@ -1132,6 +1140,7 @@ export function Terminal({
             onResetFilters={() => {
               setSearch('');
               setSelectedCategory('ALL');
+              setSelectedBrand('ALL');
               setLaborPartsFilter('ALL');
               setBundlesOnly(false);
             }}

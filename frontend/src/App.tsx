@@ -8,6 +8,7 @@ import { OverviewPage } from '@/features/overview/OverviewPage';
 import { POSTerminalPage } from '@/features/pos/POSTerminalPage';
 import { ProductsPage } from '@/features/catalog/ProductsPage';
 import { CategoriesPage } from '@/features/catalog/CategoriesPage';
+import { BrandsPage } from '@/features/catalog/BrandsPage';
 import { CustomersPage } from '@/features/customers/CustomersPage';
 import { SuppliersPage } from '@/features/suppliers/SuppliersPage';
 import { InventoryPage } from '@/features/inventory/InventoryPage';
@@ -56,6 +57,7 @@ const VALID_ROUTES: AppRoute[] = [
   '/pos',
   '/products',
   '/categories',
+  '/brands',
   '/customers',
   '/suppliers',
   '/inventory',
@@ -80,6 +82,7 @@ const ROUTE_PERMISSION_MAP: Record<AppRoute, string> = {
   '/pos': 'pos:view',
   '/products': 'catalog:view',
   '/categories': 'catalog:view',
+  '/brands': 'catalog:view',
   '/customers': 'customers:view',
   '/suppliers': 'inventory:view',
   '/inventory': 'inventory:view',
@@ -101,6 +104,7 @@ function getDefaultPermittedRoute(hasPermission: (perm: string) => boolean): App
     '/print-studio',
     '/reports',
     '/categories',
+    '/brands',
     '/suppliers',
   ];
   return (
@@ -125,6 +129,10 @@ const ROUTE_META: Record<AppRoute, { title: string; subtitle: string }> = {
   '/categories': {
     title: 'Product Categories',
     subtitle: 'Menu taxonomy, merchandising segments & category inheritance',
+  },
+  '/brands': {
+    title: 'Brands & Manufacturers',
+    subtitle: 'Brand-wise hardware catalog, OEM origins & SKU portfolios',
   },
   '/customers': {
     title: 'Customers & CRM',
@@ -725,6 +733,11 @@ function TenantWorkspaceApp({
       {visitedRoutes.includes('/categories') && (
         <div className={route === '/categories' ? 'block' : 'hidden'}>
           <CategoriesPage />
+        </div>
+      )}
+      {visitedRoutes.includes('/brands') && (
+        <div className={route === '/brands' ? 'block' : 'hidden'}>
+          <BrandsPage />
         </div>
       )}
       {visitedRoutes.includes('/customers') && (

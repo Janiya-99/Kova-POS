@@ -46,6 +46,7 @@ export const si: TranslationSchema = {
     catalog: 'නාමාවලිය',
     products: 'භාණ්ඩ',
     categories: 'වර්ග',
+    brands: 'වෙළඳ නාම',
     customers: 'පාරිභෝගිකයන්',
     procurement: 'ප්‍රසම්පාදන',
     suppliers: 'සැපයුම්කරුවන්',
@@ -73,6 +74,10 @@ export const si: TranslationSchema = {
     '/categories': {
       title: 'භාණ්ඩ වර්ගීකරණය',
       subtitle: 'ප්‍රවර්ග කළමනාකරණය සහ උරුම නීති',
+    },
+    '/brands': {
+      title: 'වෙළඳ නාම කළමනාකරණය',
+      subtitle: 'නිෂ්පාදකයින්, වෙළඳ නාම සහ භාණ්ඩ ගොනු',
     },
     '/customers': {
       title: 'පාරිභෝගිකයන් සහ CRM',

@@ -137,6 +137,25 @@ func (q *Queries) BulkUpdateProductDiscount(ctx context.Context, arg BulkUpdateP
 	return items, nil
 }
 
+const checkBrandUsage = `-- name: CheckBrandUsage :one
+SELECT EXISTS (
+    SELECT 1 FROM products p
+    WHERE p.business_id = $1 AND p.brand_id = $2 AND p.is_archived = FALSE
+)::BOOLEAN AS has_products
+`
+
+type CheckBrandUsageParams struct {
+	BusinessID uuid.UUID     `json:"business_id"`
+	BrandID    uuid.NullUUID `json:"brand_id"`
+}
+
+func (q *Queries) CheckBrandUsage(ctx context.Context, arg CheckBrandUsageParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkBrandUsage, arg.BusinessID, arg.BrandID)
+	var has_products bool
+	err := row.Scan(&has_products)
+	return has_products, err
+}
+
 const checkCategoryUsage = `-- name: CheckCategoryUsage :one
 SELECT EXISTS (
     SELECT 1 FROM products p
@@ -274,6 +293,50 @@ func (q *Queries) CreateAccessUser(ctx context.Context, arg CreateAccessUserPara
 		&i.Email,
 		&i.FullName,
 		&i.AvatarUrl,
+		&i.IsActive,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createBrand = `-- name: CreateBrand :one
+INSERT INTO brands (business_id, name, slug, country, website, logo_url, description, is_active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, business_id, name, slug, country, website, logo_url, description, is_active, created_at
+`
+
+type CreateBrandParams struct {
+	BusinessID  uuid.UUID `json:"business_id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
+	Country     string    `json:"country"`
+	Website     string    `json:"website"`
+	LogoUrl     string    `json:"logo_url"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"is_active"`
+}
+
+func (q *Queries) CreateBrand(ctx context.Context, arg CreateBrandParams) (Brand, error) {
+	row := q.db.QueryRow(ctx, createBrand,
+		arg.BusinessID,
+		arg.Name,
+		arg.Slug,
+		arg.Country,
+		arg.Website,
+		arg.LogoUrl,
+		arg.Description,
+		arg.IsActive,
+	)
+	var i Brand
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.Name,
+		&i.Slug,
+		&i.Country,
+		&i.Website,
+		&i.LogoUrl,
+		&i.Description,
 		&i.IsActive,
 		&i.CreatedAt,
 	)
@@ -494,19 +557,20 @@ func (q *Queries) CreateDesignation(ctx context.Context, arg CreateDesignationPa
 
 const createProduct = `-- name: CreateProduct :one
 INSERT INTO products (
-    business_id, category_id, business_category_id, tax_group_id,
+    business_id, category_id, business_category_id, brand_id, tax_group_id,
     sku, name, description, image_url, image_urls, unit_of_measure,
     base_price, sale_price, discount_percent, reorder_point, reorder_qty, allow_negative_stock,
     enable_serial_tracking, is_service_labor, allow_fractional_qty,
     variants_json, modifiers_json, uom_options_json, warranty_terms
 )
-VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-RETURNING id, business_id, category_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived
+VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+RETURNING id, business_id, category_id, brand_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived
 `
 
 type CreateProductParams struct {
 	BusinessID           uuid.UUID       `json:"business_id"`
 	CategoryID           uuid.UUID       `json:"category_id"`
+	BrandID              uuid.NullUUID   `json:"brand_id"`
 	TaxGroupID           uuid.NullUUID   `json:"tax_group_id"`
 	Sku                  string          `json:"sku"`
 	Name                 string          `json:"name"`
@@ -533,6 +597,7 @@ type CreateProductRow struct {
 	ID                   uuid.UUID       `json:"id"`
 	BusinessID           uuid.UUID       `json:"business_id"`
 	CategoryID           uuid.UUID       `json:"category_id"`
+	BrandID              uuid.NullUUID   `json:"brand_id"`
 	Sku                  string          `json:"sku"`
 	Name                 string          `json:"name"`
 	UnitOfMeasure        string          `json:"unit_of_measure"`
@@ -558,6 +623,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (C
 	row := q.db.QueryRow(ctx, createProduct,
 		arg.BusinessID,
 		arg.CategoryID,
+		arg.BrandID,
 		arg.TaxGroupID,
 		arg.Sku,
 		arg.Name,
@@ -584,6 +650,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (C
 		&i.ID,
 		&i.BusinessID,
 		&i.CategoryID,
+		&i.BrandID,
 		&i.Sku,
 		&i.Name,
 		&i.UnitOfMeasure,
@@ -744,6 +811,21 @@ func (q *Queries) DeactivateOtherTaxRulesInGroup(ctx context.Context, arg Deacti
 		arg.Code,
 		arg.Code_2,
 	)
+	return err
+}
+
+const deleteBrand = `-- name: DeleteBrand :exec
+DELETE FROM brands
+WHERE business_id = $1 AND id = $2
+`
+
+type DeleteBrandParams struct {
+	BusinessID uuid.UUID `json:"business_id"`
+	ID         uuid.UUID `json:"id"`
+}
+
+func (q *Queries) DeleteBrand(ctx context.Context, arg DeleteBrandParams) error {
+	_, err := q.db.Exec(ctx, deleteBrand, arg.BusinessID, arg.ID)
 	return err
 }
 
@@ -1426,6 +1508,80 @@ func (q *Queries) ListAllTaxRulesDetailedForBusiness(ctx context.Context, busine
 	return items, nil
 }
 
+const listBrandsWithCounts = `-- name: ListBrandsWithCounts :many
+SELECT
+    b.id,
+    b.business_id,
+    b.name,
+    b.slug,
+    b.country,
+    b.website,
+    b.logo_url,
+    b.description,
+    b.is_active,
+    b.created_at,
+    COUNT(p.id) FILTER (WHERE p.is_archived = FALSE)::INT AS product_count,
+    COALESCE(SUM(CASE WHEN p.is_archived = FALSE THEN stock.qty ELSE 0 END), 0)::NUMERIC(19,4) AS total_stock
+FROM brands b
+LEFT JOIN products p ON p.brand_id = b.id AND p.business_id = b.business_id
+LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(ib.remaining_qty), 0)::NUMERIC(19,4) AS qty
+    FROM inventory_batches ib
+    WHERE ib.business_id = b.business_id AND ib.product_id = p.id AND ib.remaining_qty > 0
+) stock ON TRUE
+WHERE b.business_id = $1
+GROUP BY b.id
+ORDER BY b.name ASC
+`
+
+type ListBrandsWithCountsRow struct {
+	ID           uuid.UUID          `json:"id"`
+	BusinessID   uuid.UUID          `json:"business_id"`
+	Name         string             `json:"name"`
+	Slug         string             `json:"slug"`
+	Country      string             `json:"country"`
+	Website      string             `json:"website"`
+	LogoUrl      string             `json:"logo_url"`
+	Description  string             `json:"description"`
+	IsActive     bool               `json:"is_active"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ProductCount int32              `json:"product_count"`
+	TotalStock   decimal.Decimal    `json:"total_stock"`
+}
+
+func (q *Queries) ListBrandsWithCounts(ctx context.Context, businessID uuid.UUID) ([]ListBrandsWithCountsRow, error) {
+	rows, err := q.db.Query(ctx, listBrandsWithCounts, businessID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBrandsWithCountsRow{}
+	for rows.Next() {
+		var i ListBrandsWithCountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BusinessID,
+			&i.Name,
+			&i.Slug,
+			&i.Country,
+			&i.Website,
+			&i.LogoUrl,
+			&i.Description,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.ProductCount,
+			&i.TotalStock,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBusinessAccessUsers = `-- name: ListBusinessAccessUsers :many
 SELECT
     ubr.id AS user_business_role_id,
@@ -2047,6 +2203,60 @@ func (q *Queries) UpdateAccessUserDetails(ctx context.Context, arg UpdateAccessU
 	return err
 }
 
+const updateBrand = `-- name: UpdateBrand :one
+UPDATE brands
+SET
+    name = $3,
+    slug = $4,
+    country = $5,
+    website = $6,
+    logo_url = $7,
+    description = $8,
+    is_active = $9
+WHERE business_id = $1 AND id = $2
+RETURNING id, business_id, name, slug, country, website, logo_url, description, is_active, created_at
+`
+
+type UpdateBrandParams struct {
+	BusinessID  uuid.UUID `json:"business_id"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Slug        string    `json:"slug"`
+	Country     string    `json:"country"`
+	Website     string    `json:"website"`
+	LogoUrl     string    `json:"logo_url"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"is_active"`
+}
+
+func (q *Queries) UpdateBrand(ctx context.Context, arg UpdateBrandParams) (Brand, error) {
+	row := q.db.QueryRow(ctx, updateBrand,
+		arg.BusinessID,
+		arg.ID,
+		arg.Name,
+		arg.Slug,
+		arg.Country,
+		arg.Website,
+		arg.LogoUrl,
+		arg.Description,
+		arg.IsActive,
+	)
+	var i Brand
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessID,
+		&i.Name,
+		&i.Slug,
+		&i.Country,
+		&i.Website,
+		&i.LogoUrl,
+		&i.Description,
+		&i.IsActive,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateBusinessBaseCurrency = `-- name: UpdateBusinessBaseCurrency :exec
 UPDATE businesses
 SET base_currency = $2
@@ -2402,33 +2612,35 @@ UPDATE products
 SET
     category_id = $3,
     business_category_id = $3,
-    sku = $4,
-    name = $5,
-    description = $6,
-    image_url = $7,
-    image_urls = $8,
-    unit_of_measure = $9,
-    base_price = $10,
-    sale_price = $11,
-    discount_percent = $12,
-    reorder_point = $13,
-    reorder_qty = $14,
-    allow_negative_stock = $15,
-    enable_serial_tracking = $16,
-    is_service_labor = $17,
-    allow_fractional_qty = $18,
-    variants_json = $19,
-    modifiers_json = $20,
-    uom_options_json = $21,
-    warranty_terms = $22
+    brand_id = $4,
+    sku = $5,
+    name = $6,
+    description = $7,
+    image_url = $8,
+    image_urls = $9,
+    unit_of_measure = $10,
+    base_price = $11,
+    sale_price = $12,
+    discount_percent = $13,
+    reorder_point = $14,
+    reorder_qty = $15,
+    allow_negative_stock = $16,
+    enable_serial_tracking = $17,
+    is_service_labor = $18,
+    allow_fractional_qty = $19,
+    variants_json = $20,
+    modifiers_json = $21,
+    uom_options_json = $22,
+    warranty_terms = $23
 WHERE business_id = $1 AND id = $2
-RETURNING id, business_id, category_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived
+RETURNING id, business_id, category_id, brand_id, sku, name, unit_of_measure, base_price, sale_price, discount_percent, reorder_point, reorder_qty, image_url, image_urls, allow_negative_stock, enable_serial_tracking, is_service_labor, allow_fractional_qty, variants_json, modifiers_json, uom_options_json, warranty_terms, is_archived
 `
 
 type UpdateProductParams struct {
 	BusinessID           uuid.UUID       `json:"business_id"`
 	ID                   uuid.UUID       `json:"id"`
 	CategoryID           uuid.UUID       `json:"category_id"`
+	BrandID              uuid.NullUUID   `json:"brand_id"`
 	Sku                  string          `json:"sku"`
 	Name                 string          `json:"name"`
 	Description          string          `json:"description"`
@@ -2454,6 +2666,7 @@ type UpdateProductRow struct {
 	ID                   uuid.UUID       `json:"id"`
 	BusinessID           uuid.UUID       `json:"business_id"`
 	CategoryID           uuid.UUID       `json:"category_id"`
+	BrandID              uuid.NullUUID   `json:"brand_id"`
 	Sku                  string          `json:"sku"`
 	Name                 string          `json:"name"`
 	UnitOfMeasure        string          `json:"unit_of_measure"`
@@ -2480,6 +2693,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (U
 		arg.BusinessID,
 		arg.ID,
 		arg.CategoryID,
+		arg.BrandID,
 		arg.Sku,
 		arg.Name,
 		arg.Description,
@@ -2505,6 +2719,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (U
 		&i.ID,
 		&i.BusinessID,
 		&i.CategoryID,
+		&i.BrandID,
 		&i.Sku,
 		&i.Name,
 		&i.UnitOfMeasure,

@@ -295,6 +295,7 @@ export interface IndustryBlueprintMeta {
   departments: string[];
   designations: Array<{ title: string; maxDiscountPct: number }>;
   categories: string[];
+  brands: string[];
   settingsSummary: string[];
 }
 
@@ -314,6 +315,7 @@ export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMe
       { title: 'Inventory Controller', maxDiscountPct: 5 },
     ],
     categories: ['Core Collection', 'Accessories'],
+    brands: ['Nike', 'Adidas', 'Zara', 'Uniqlo', "Levi's", 'Ray-Ban'],
     settingsSummary: ['Size & Color Matrix Variants', 'Held Bills', '80mm Receipt', 'Max Cashier Disc 15%'],
   },
   restaurant: {
@@ -332,6 +334,7 @@ export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMe
       { title: 'Pantry & Supply Controller', maxDiscountPct: 5 },
     ],
     categories: ['Main Kitchen', 'Beverages & Bar', 'Desserts & Pastry'],
+    brands: ['Chef Signature', 'Lavazza', 'Dilmah', 'San Pellegrino', 'Valrhona'],
     settingsSummary: ['Dining Tables Enabled', 'Live Kitchen KOT Queue', '80mm KOT Ticket', '2x Loyalty Points'],
   },
   hardware: {
@@ -349,6 +352,7 @@ export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMe
       { title: 'Warehouse Stock Controller', maxDiscountPct: 5 },
     ],
     categories: ['Building Materials', 'Power Tools & Fasteners'],
+    brands: ['Bosch', 'Makita', 'DeWalt', 'Dulux', '3M', 'Hilti'],
     settingsSummary: ['Fractional Decimal Qty', 'Multi-UOM Switching', 'PO + GRN Approvals', 'Max Contractor Disc 20%'],
   },
   garage: {
@@ -366,6 +370,7 @@ export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMe
       { title: 'Spare Parts Controller', maxDiscountPct: 5 },
     ],
     categories: ['Service & Labor', 'Spare Parts & Fluids'],
+    brands: ['Toyota Genuine', 'Mobil 1', 'Brembo', 'Michelin', 'Bosch Auto', 'Castrol'],
     settingsSummary: ['Mandatory Vehicle Plate', 'Split Parts vs Labor', 'Bay Job Cards', 'Fractional Fluid Qty'],
   },
   mobile: {
@@ -383,6 +388,7 @@ export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMe
       { title: 'Serialized Stock Controller', maxDiscountPct: 5 },
     ],
     categories: ['Smartphones & Devices', 'Accessories & Chargers'],
+    brands: ['Apple', 'OPPO', 'Infinix', 'Soundcore', 'Samsung', 'Google', 'Xiaomi', 'Anker'],
     settingsSummary: ['Mandatory IMEI / Serial', 'PO + GRN Audit Lock', 'Warranty Terms', '80mm Warranty Slip'],
   },
   stationery: {
@@ -399,6 +405,7 @@ export const INDUSTRY_BLUEPRINTS: Record<IndustryLayoutMode, IndustryBlueprintMe
       { title: 'Pack & Supply Controller', maxDiscountPct: 5 },
     ],
     categories: ['Paper & Notebooks', 'Office Supplies'],
+    brands: ['Faber-Castell', 'Casio', 'Moleskine', 'HP', 'PaperOne', 'Logitech'],
     settingsSummary: ['7-Col Expanded Grid', 'Pack Bundles & Multi-UOM', '58mm Compact Receipt', '2x Loyalty Points'],
   },
 };

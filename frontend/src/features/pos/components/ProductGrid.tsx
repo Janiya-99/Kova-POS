@@ -26,6 +26,7 @@ import { cmpDecimal, getProductPromoPercent } from '@/lib/decimal';
 import {
   parseJSONField,
   type CartItemMeta,
+  type POSBrand,
   type ProductUOMOption,
   type ProductVariantOption,
 } from '../types';
@@ -35,6 +36,9 @@ import { ProductConfigureDialog } from './ProductConfigureDialog';
 
 export interface ProductGridProps {
   products: LocalProduct[];
+  brands?: POSBrand[];
+  selectedBrand?: string;
+  onSelectBrand?: (brandId: string) => void;
   cartItems: CartItem[];
   capabilities: POSCapabilities;
   search: string;
@@ -72,6 +76,9 @@ const HOLD_MOVE_TOLERANCE_PX = 8;
  */
 export function ProductGrid({
   products,
+  brands = [],
+  selectedBrand = 'ALL',
+  onSelectBrand,
   cartItems,
   capabilities,
   search,
@@ -265,6 +272,41 @@ export function ProductGrid({
         </Badge>
       </div>
 
+      {/* Horizontal Scrollable Brand Filter Pills (OPPO, Infinix, Apple, Soundcore, Samsung...) */}
+      {brands.length > 0 && onSelectBrand && (
+        <div
+          data-testid="pos-brand-filter-rail"
+          className="shrink-0 flex items-center gap-1.5 overflow-x-auto pb-1 pos-clean-scroll"
+        >
+          <button
+            type="button"
+            onClick={() => onSelectBrand('ALL')}
+            className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition cursor-pointer ${
+              selectedBrand === 'ALL'
+                ? 'bg-[#222026] text-white'
+                : 'bg-[#F5F6FA] text-ink-muted hover:text-[#222026]'
+            }`}
+          >
+            All Brands
+          </button>
+          {brands.map((brand) => (
+            <button
+              key={brand.id}
+              type="button"
+              data-testid={`pos-brand-pill-${brand.slug}`}
+              onClick={() => onSelectBrand(brand.id)}
+              className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold transition cursor-pointer ${
+                selectedBrand === brand.id
+                  ? 'bg-[#222026] text-white'
+                  : 'bg-[#F5F6FA] text-ink-muted hover:text-[#222026]'
+              }`}
+            >
+              {brand.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Independently Scrollable Catalog Grid */}
       <div
         data-testid="pos-catalog-scroll"
@@ -434,6 +476,7 @@ export function ProductGrid({
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-[10px] font-medium text-ink-muted">
+                        {product.brand_name ? `${product.brand_name} • ` : ''}
                         {product.category_name || 'General'} • {product.sku}
                         {capabilities.matrixVariants && variants.length > 0 ? ` • ${variants.length} var` : ''}
                         {capabilities.multiUomToggle && uoms.length > 1 ? ' • UOM' : ''}

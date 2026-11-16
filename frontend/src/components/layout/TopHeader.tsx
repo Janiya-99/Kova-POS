@@ -863,6 +863,7 @@ export function TopHeader({
                   { label: 'Edge POS Terminal Checkout', route: '/pos', perm: 'pos:view' },
                   { label: 'Product Catalog & Add SKU', route: '/products', perm: 'catalog:view' },
                   { label: 'Categories Management', route: '/categories', perm: 'catalog:view' },
+                  { label: 'Brands & Manufacturers', route: '/brands', perm: 'catalog:view' },
                   { label: 'Customers Directory & CRM', route: '/customers', perm: 'customers:view' },
                   { label: 'Suppliers & Vendor Master', route: '/suppliers', perm: 'inventory:view' },
                   { label: 'Inventory FIFO & GRN Intake', route: '/inventory', perm: 'inventory:view' },

@@ -16,6 +16,20 @@ export interface POSCategory {
   slug: string;
 }
 
+export interface POSBrand {
+  id: string;
+  business_id?: string;
+  name: string;
+  slug: string;
+  country?: string;
+  website?: string;
+  logo_url?: string;
+  description?: string;
+  is_active?: boolean;
+  product_count?: number;
+  total_stock?: string | number;
+}
+
 export interface POSCustomer {
   id: string;
   code: string;
@@ -63,6 +77,7 @@ export interface HeldBillEntryDTO {
 export interface POSBootstrapResponse {
   products: LocalProduct[];
   categories: POSCategory[];
+  brands?: POSBrand[];
   customers: POSCustomer[];
   tax_rules: LocalTaxRule[];
   resolved_settings: LocalResolvedSetting[];

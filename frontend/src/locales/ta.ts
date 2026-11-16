@@ -46,6 +46,7 @@ export const ta: TranslationSchema = {
     catalog: 'பட்டியல்',
     products: 'பொருட்கள்',
     categories: 'வகைகள்',
+    brands: 'பிராண்டுகள்',
     customers: 'வாடிக்கையாளர்கள்',
     procurement: 'கொள்முதல்',
     suppliers: 'சப்ளையர்கள்',
@@ -73,6 +74,10 @@ export const ta: TranslationSchema = {
     '/categories': {
       title: 'பொருள் வகைகள்',
       subtitle: 'வகைப் பிரிவுகள் மற்றும் வரி மரபுரிமை விதிகள்',
+    },
+    '/brands': {
+      title: 'பிராண்டுகள் & உற்பத்தியாளர்கள்',
+      subtitle: 'பிராண்ட் வாரியான பொருட்கள் மற்றும் SKU மேலாண்மை',
     },
     '/customers': {
       title: 'வாடிக்கையாளர்கள் & CRM',

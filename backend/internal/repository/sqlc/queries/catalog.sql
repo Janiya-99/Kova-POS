@@ -4,14 +4,23 @@ FROM categories
 WHERE business_id = $1
 ORDER BY name ASC;
 
+-- name: ListBrandsForBusiness :many
+SELECT id, business_id, name, slug, country, website, logo_url, description, is_active
+FROM brands
+WHERE business_id = $1 AND is_active = TRUE
+ORDER BY name ASC;
+
 -- name: ListProductsWithBranchStock :many
 SELECT
     p.id,
     p.business_id,
     p.category_id,
     p.business_category_id,
+    p.brand_id,
     c.name AS category_name,
     c.gender_segment,
+    COALESCE(b.name, '')::TEXT AS brand_name,
+    COALESCE(b.slug, '')::TEXT AS brand_slug,
     COALESCE(p.tax_group_id, c.tax_group_id) AS effective_tax_group_id,
     p.sku,
     p.name,
@@ -44,12 +53,13 @@ SELECT
     ), 0)::NUMERIC(19,4) AS branch_stock
 FROM products p
 JOIN categories c ON c.id = p.category_id
+LEFT JOIN brands b ON b.id = p.brand_id AND b.business_id = p.business_id
 WHERE p.business_id = $1 AND p.is_active = TRUE AND p.is_archived = FALSE
 ORDER BY p.name ASC;
 
 -- name: GetProductByID :one
 SELECT
-    p.id, p.business_id, p.category_id, p.tax_group_id,
+    p.id, p.business_id, p.category_id, p.brand_id, p.tax_group_id,
     c.tax_group_id AS category_tax_group_id,
     p.sku, p.name, p.base_price, p.sale_price, p.discount_percent,
     p.reorder_point, p.reorder_qty,

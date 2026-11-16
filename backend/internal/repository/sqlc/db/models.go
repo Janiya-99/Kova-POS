@@ -49,6 +49,19 @@ type Branch struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type Brand struct {
+	ID          uuid.UUID          `json:"id"`
+	BusinessID  uuid.UUID          `json:"business_id"`
+	Name        string             `json:"name"`
+	Slug        string             `json:"slug"`
+	Country     string             `json:"country"`
+	Website     string             `json:"website"`
+	LogoUrl     string             `json:"logo_url"`
+	Description string             `json:"description"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Business struct {
 	ID                uuid.UUID          `json:"id"`
 	Name              string             `json:"name"`
@@ -338,6 +351,7 @@ type Product struct {
 	ModifiersJson        json.RawMessage    `json:"modifiers_json"`
 	UomOptionsJson       json.RawMessage    `json:"uom_options_json"`
 	WarrantyTerms        string             `json:"warranty_terms"`
+	BrandID              uuid.NullUUID      `json:"brand_id"`
 }
 
 type ProductBarcode struct {

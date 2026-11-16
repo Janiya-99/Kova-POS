@@ -662,11 +662,14 @@ func (u *AdminAuditUsecase) CreateCompany(ctx context.Context, actor domain.Plat
 		return nil, err
 	}
 
-	// Auto-migrate vertical-tailored Departments & Designations cleanly from the shared Industry Blueprint.
+	// Auto-migrate vertical-tailored Departments, Designations & Starter Brands cleanly from the shared Industry Blueprint.
 	txQueries := db.New(tx)
 	ownerDesigID, dErr := EnsureIndustryDepartmentsAndDesignations(ctx, txQueries, bizID, industry)
 	if dErr != nil {
 		return nil, dErr
+	}
+	if bErr := EnsureIndustryBrands(ctx, txQueries, bizID, industry); bErr != nil {
+		return nil, bErr
 	}
 	var ownerDesigNull uuid.NullUUID
 	if ownerDesigID != uuid.Nil {

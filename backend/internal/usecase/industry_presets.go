@@ -30,6 +30,15 @@ type IndustryStarterCategory struct {
 	Slug string `json:"slug"`
 }
 
+// IndustryStarterBrand defines an initial vendor/product brand auto-provisioned for a business vertical.
+type IndustryStarterBrand struct {
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Country     string `json:"country"`
+	Website     string `json:"website"`
+	Description string `json:"description"`
+}
+
 // IndustryBlueprint defines the full operational defaults migrated automatically per business vertical.
 type IndustryBlueprint struct {
 	Mode                 string                      `json:"mode"`
@@ -44,6 +53,7 @@ type IndustryBlueprint struct {
 	Departments          []IndustryDepartmentSeed    `json:"departments"`
 	Designations         []IndustryDesignationSeed   `json:"designations"`
 	Categories           []IndustryStarterCategory   `json:"categories"`
+	Brands               []IndustryStarterBrand      `json:"brands"`
 }
 
 // BlueprintForIndustry returns the authoritative operational defaults for the given business vertical.
@@ -81,6 +91,13 @@ func BlueprintForIndustry(rawMode string) IndustryBlueprint {
 				{Name: "Beverages & Bar", Slug: "beverages-bar"},
 				{Name: "Desserts & Pastry", Slug: "desserts-pastry"},
 			},
+			Brands: []IndustryStarterBrand{
+				{Name: "Chef Signature", Slug: "chef-signature", Country: "Sri Lanka", Website: "", Description: "House culinary specials & signature menu items"},
+				{Name: "Lavazza", Slug: "lavazza", Country: "Italy", Website: "https://lavazza.com", Description: "Single-origin & espresso roast blends"},
+				{Name: "Dilmah", Slug: "dilmah", Country: "Sri Lanka", Website: "https://dilmahtea.com", Description: "Ceylon leaf & gourmet iced tea selections"},
+				{Name: "San Pellegrino", Slug: "san-pellegrino", Country: "Italy", Website: "https://sanpellegrino.com", Description: "Sparkling mineral water & citrus beverages"},
+				{Name: "Valrhona", Slug: "valrhona", Country: "France", Website: "https://valrhona.com", Description: "Fine artisan chocolate & pastry coverings"},
+			},
 		}
 	case "hardware":
 		return IndustryBlueprint{
@@ -110,6 +127,14 @@ func BlueprintForIndustry(rawMode string) IndustryBlueprint {
 			Categories: []IndustryStarterCategory{
 				{Name: "Building Materials", Slug: "building-materials"},
 				{Name: "Power Tools & Fasteners", Slug: "power-tools"},
+			},
+			Brands: []IndustryStarterBrand{
+				{Name: "Bosch", Slug: "bosch", Country: "Germany", Website: "https://bosch-professional.com", Description: "Rotary hammers, drills & laser levels"},
+				{Name: "Makita", Slug: "makita", Country: "Japan", Website: "https://makita.com", Description: "Brushless 18V LXT cordless site tools"},
+				{Name: "DeWalt", Slug: "dewalt", Country: "USA", Website: "https://dewalt.com", Description: "Heavy-duty XR construction power tools"},
+				{Name: "Dulux", Slug: "dulux", Country: "UK", Website: "https://dulux.com", Description: "Weathershield exterior & matte paints"},
+				{Name: "3M", Slug: "3m", Country: "USA", Website: "https://3m.com", Description: "Industrial adhesives, abrasives & safety PPE"},
+				{Name: "Hilti", Slug: "hilti", Country: "Liechtenstein", Website: "https://hilti.com", Description: "Structural concrete anchors & fasteners"},
 			},
 		}
 	case "garage":
@@ -141,6 +166,14 @@ func BlueprintForIndustry(rawMode string) IndustryBlueprint {
 				{Name: "Service & Labor", Slug: "service-labor"},
 				{Name: "Spare Parts & Fluids", Slug: "spare-parts"},
 			},
+			Brands: []IndustryStarterBrand{
+				{Name: "Toyota Genuine", Slug: "toyota-genuine", Country: "Japan", Website: "https://toyota.com", Description: "OEM factory filters, belts & service kits"},
+				{Name: "Mobil 1", Slug: "mobil-1", Country: "USA", Website: "https://mobil.com", Description: "Full-synthetic engine & transmission lubricants"},
+				{Name: "Brembo", Slug: "brembo", Country: "Italy", Website: "https://brembo.com", Description: "Ceramic brake pads & ventilated disc rotors"},
+				{Name: "Michelin", Slug: "michelin", Country: "France", Website: "https://michelin.com", Description: "All-season passenger & SUV performance tires"},
+				{Name: "Bosch Auto", Slug: "bosch-auto", Country: "Germany", Website: "https://boschaftermarket.com", Description: "AGM batteries, wipers, spark plugs & OBD sensors"},
+				{Name: "Castrol", Slug: "castrol", Country: "UK", Website: "https://castrol.com", Description: "EDGE motor oil & radiator coolants"},
+			},
 		}
 	case "mobile":
 		return IndustryBlueprint{
@@ -171,6 +204,24 @@ func BlueprintForIndustry(rawMode string) IndustryBlueprint {
 				{Name: "Smartphones & Devices", Slug: "smartphones"},
 				{Name: "Accessories & Chargers", Slug: "mobile-accessories"},
 			},
+			Brands: []IndustryStarterBrand{
+				{Name: "Apple", Slug: "apple", Country: "USA", Website: "https://apple.com", Description: "iPhone Pro Max, iPad Pro, Watch Ultra & AirPods hardware"},
+				{Name: "OPPO", Slug: "oppo", Country: "China", Website: "https://oppo.com", Description: "Find X flagship & Reno Pro Hasselblad camera smartphones"},
+				{Name: "Infinix", Slug: "infinix", Country: "Hong Kong", Website: "https://infinixmobility.com", Description: "GT gaming smartphones, Note Pro & Zero Ultra devices"},
+				{Name: "Soundcore", Slug: "soundcore", Country: "China / USA", Website: "https://soundcore.com", Description: "Liberty Pro earbuds, Space ANC headphones & Boom speakers"},
+				{Name: "Samsung", Slug: "samsung", Country: "South Korea", Website: "https://samsung.com", Description: "Galaxy S-Series Ultra, Z Foldables & AMOLED smartphones"},
+				{Name: "Google", Slug: "google", Country: "USA", Website: "https://store.google.com", Description: "Pixel Pro XL & Tensor AI flagship smartphones"},
+				{Name: "Xiaomi", Slug: "xiaomi", Country: "China", Website: "https://mi.com", Description: "Xiaomi Leica camera flagships & HyperCharge ecosystems"},
+				{Name: "OnePlus", Slug: "oneplus", Country: "China", Website: "https://oneplus.com", Description: "OxygenOS performance flagships & Nord 5G smartphones"},
+				{Name: "Anker", Slug: "anker", Country: "China / USA", Website: "https://anker.com", Description: "MagGo Qi2 magnetic power banks & GaN fast chargers"},
+				{Name: "Ugreen", Slug: "ugreen", Country: "China", Website: "https://ugreen.com", Description: "Nexode 140W/65W GaN chargers & 240W braided cables"},
+				{Name: "Garmin", Slug: "garmin", Country: "Switzerland", Website: "https://garmin.com", Description: "Fenix titanium GPS & AMOLED multisport smartwatches"},
+				{Name: "Belkin", Slug: "belkin", Country: "USA", Website: "https://belkin.com", Description: "UltraGlass shields & BoostCharge MagSafe accessories"},
+				{Name: "Spigen", Slug: "spigen", Country: "South Korea", Website: "https://spigen.com", Description: "Ultra Hybrid, Mag Armor & protective mobile cases"},
+				{Name: "TP-Link", Slug: "tp-link", Country: "Singapore", Website: "https://tp-link.com", Description: "Deco Wi-Fi 7 mesh & 5G CPE mobile broadband routers"},
+				{Name: "SanDisk", Slug: "sandisk", Country: "USA", Website: "https://westerndigital.com", Description: "Extreme Pro portable NVMe SSDs & high-speed storage"},
+				{Name: "Kova Certified", Slug: "kova-certified", Country: "Sri Lanka", Website: "https://kovamobile.lk", Description: "Diagnostics-verified pre-owned smartphones & hub bundles"},
+			},
 		}
 	case "stationery":
 		return IndustryBlueprint{
@@ -198,6 +249,14 @@ func BlueprintForIndustry(rawMode string) IndustryBlueprint {
 			Categories: []IndustryStarterCategory{
 				{Name: "Paper & Notebooks", Slug: "paper-notebooks"},
 				{Name: "Office Supplies", Slug: "office-supplies"},
+			},
+			Brands: []IndustryStarterBrand{
+				{Name: "Faber-Castell", Slug: "faber-castell", Country: "Germany", Website: "https://faber-castell.com", Description: "Technical pens, art pencils & drafting tools"},
+				{Name: "Casio", Slug: "casio", Country: "Japan", Website: "https://casio.com", Description: "Scientific calculators & desktop printing units"},
+				{Name: "Moleskine", Slug: "moleskine", Country: "Italy", Website: "https://moleskine.com", Description: "Hardcover executive notebooks & planners"},
+				{Name: "HP", Slug: "hp", Country: "USA", Website: "https://hp.com", Description: "LaserJet toners, ink packs & thermal rolls"},
+				{Name: "PaperOne", Slug: "paperone", Country: "Singapore", Website: "https://paperone.com", Description: "High-bright A4/A3 digital copier reams"},
+				{Name: "Logitech", Slug: "logitech", Country: "Switzerland", Website: "https://logitech.com", Description: "MX desk keyboards, mice & webcams"},
 			},
 		}
 	default:
@@ -227,6 +286,14 @@ func BlueprintForIndustry(rawMode string) IndustryBlueprint {
 			Categories: []IndustryStarterCategory{
 				{Name: "Core Collection", Slug: "core-collection"},
 				{Name: "Accessories", Slug: "accessories"},
+			},
+			Brands: []IndustryStarterBrand{
+				{Name: "Nike", Slug: "nike", Country: "USA", Website: "https://nike.com", Description: "Athletic footwear, Dri-FIT apparel & lifestyle bags"},
+				{Name: "Adidas", Slug: "adidas", Country: "Germany", Website: "https://adidas.com", Description: "Originals sneakers & performance essentials"},
+				{Name: "Zara", Slug: "zara", Country: "Spain", Website: "https://zara.com", Description: "Seasonal tailored apparel & studio basics"},
+				{Name: "Uniqlo", Slug: "uniqlo", Country: "Japan", Website: "https://uniqlo.com", Description: "LifeWear Supima cotton & AIRism collections"},
+				{Name: "Levi's", Slug: "levis", Country: "USA", Website: "https://levi.com", Description: "Selvedge denim jeans & utility outerwear"},
+				{Name: "Ray-Ban", Slug: "ray-ban", Country: "Italy", Website: "https://ray-ban.com", Description: "Polarized eyewear & classic optical frames"},
 			},
 		}
 	}
@@ -350,5 +417,49 @@ func EnsureIndustryDepartmentsAndDesignations(
 		}
 	}
 	return ownerDesigID, nil
+}
+
+// EnsureIndustryBrands idempotently seeds starter vertical brands without overwriting existing custom brands.
+func EnsureIndustryBrands(
+	ctx context.Context,
+	queries *db.Queries,
+	businessID uuid.UUID,
+	rawMode string,
+) error {
+	if queries == nil || businessID == uuid.Nil {
+		return nil
+	}
+	bp := BlueprintForIndustry(rawMode)
+	existing, err := queries.ListBrandsForBusiness(ctx, businessID)
+	if err != nil {
+		return err
+	}
+	seenSlug := make(map[string]bool, len(existing))
+	seenName := make(map[string]bool, len(existing))
+	for _, b := range existing {
+		seenSlug[strings.ToLower(strings.TrimSpace(b.Slug))] = true
+		seenName[strings.ToLower(strings.TrimSpace(b.Name))] = true
+	}
+	for _, sb := range bp.Brands {
+		sl := strings.ToLower(strings.TrimSpace(sb.Slug))
+		nm := strings.ToLower(strings.TrimSpace(sb.Name))
+		if seenSlug[sl] || seenName[nm] {
+			continue
+		}
+		if _, err := queries.CreateBrand(ctx, db.CreateBrandParams{
+			BusinessID:  businessID,
+			Name:        sb.Name,
+			Slug:        sl,
+			Country:     sb.Country,
+			Website:     sb.Website,
+			LogoUrl:     "",
+			Description: sb.Description,
+			IsActive:    true,
+		}); err == nil {
+			seenSlug[sl] = true
+			seenName[nm] = true
+		}
+	}
+	return nil
 }
 

@@ -30,6 +30,7 @@ type CreateCustomerRequest struct {
 // SaveProductRequest validates Product (Item) Management form fields & Level-6 override.
 type SaveProductRequest struct {
 	CategoryID             uuid.UUID        `json:"category_id"`
+	BrandID                *uuid.UUID       `json:"brand_id,omitempty"`
 	TaxGroupID             *uuid.UUID       `json:"tax_group_id,omitempty"`
 	SKU                    string           `json:"sku"`
 	Barcode                string           `json:"barcode"`
@@ -388,6 +389,11 @@ func (c *CatalogCompanyUsecase) SaveProduct(
 	var savedID uuid.UUID
 	var out any
 
+	var brandNull uuid.NullUUID
+	if req.BrandID != nil && *req.BrandID != uuid.Nil {
+		brandNull = uuid.NullUUID{UUID: *req.BrandID, Valid: true}
+	}
+
 	if productID == nil || *productID == uuid.Nil {
 		var tg uuid.NullUUID
 		if req.TaxGroupID != nil && *req.TaxGroupID != uuid.Nil {
@@ -396,6 +402,7 @@ func (c *CatalogCompanyUsecase) SaveProduct(
 		row, err := c.queries.CreateProduct(ctx, db.CreateProductParams{
 			BusinessID:           businessID,
 			CategoryID:           req.CategoryID,
+			BrandID:              brandNull,
 			TaxGroupID:           tg,
 			Sku:                  sku,
 			Name:                 name,
@@ -427,6 +434,7 @@ func (c *CatalogCompanyUsecase) SaveProduct(
 			BusinessID:           businessID,
 			ID:                   *productID,
 			CategoryID:           req.CategoryID,
+			BrandID:              brandNull,
 			Sku:                  sku,
 			Name:                 name,
 			Description:          strings.TrimSpace(req.Description),
@@ -719,6 +727,7 @@ func (c *CatalogCompanyUsecase) applyIndustryPresetQuiet(ctx context.Context, bu
 		}
 	}
 	_, _ = EnsureIndustryDepartmentsAndDesignations(ctx, c.queries, businessID, mode)
+	_ = EnsureIndustryBrands(ctx, c.queries, businessID, mode)
 	return nil
 }
 
@@ -847,6 +856,76 @@ func (c *CatalogCompanyUsecase) DeleteCategory(ctx context.Context, businessID, 
 	return c.queries.DeleteCategory(ctx, db.DeleteCategoryParams{
 		BusinessID: businessID,
 		ID:         categoryID,
+	})
+}
+
+// SaveBrandRequest validates product brand creation or updates.
+type SaveBrandRequest struct {
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Country     string `json:"country"`
+	Website     string `json:"website"`
+	LogoURL     string `json:"logo_url"`
+	Description string `json:"description"`
+	IsActive    *bool  `json:"is_active,omitempty"`
+}
+
+// ListBrands returns all tenant product brands with active SKU and stock counts.
+func (c *CatalogCompanyUsecase) ListBrands(ctx context.Context, businessID uuid.UUID) ([]db.ListBrandsWithCountsRow, error) {
+	return c.queries.ListBrandsWithCounts(ctx, businessID)
+}
+
+// SaveBrand creates or updates a product brand for the tenant business.
+func (c *CatalogCompanyUsecase) SaveBrand(ctx context.Context, businessID uuid.UUID, brandID *uuid.UUID, req SaveBrandRequest) (any, error) {
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, errors.New("brand name is required")
+	}
+	slug := normalizeCategorySlug(name, req.Slug)
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	if brandID == nil || *brandID == uuid.Nil {
+		return c.queries.CreateBrand(ctx, db.CreateBrandParams{
+			BusinessID:  businessID,
+			Name:        name,
+			Slug:        slug,
+			Country:     strings.TrimSpace(req.Country),
+			Website:     strings.TrimSpace(req.Website),
+			LogoUrl:     strings.TrimSpace(req.LogoURL),
+			Description: strings.TrimSpace(req.Description),
+			IsActive:    isActive,
+		})
+	}
+	return c.queries.UpdateBrand(ctx, db.UpdateBrandParams{
+		BusinessID:  businessID,
+		ID:          *brandID,
+		Name:        name,
+		Slug:        slug,
+		Country:     strings.TrimSpace(req.Country),
+		Website:     strings.TrimSpace(req.Website),
+		LogoUrl:     strings.TrimSpace(req.LogoURL),
+		Description: strings.TrimSpace(req.Description),
+		IsActive:    isActive,
+	})
+}
+
+// DeleteBrand removes an unused brand or rejects cleanly if active products are linked to it.
+func (c *CatalogCompanyUsecase) DeleteBrand(ctx context.Context, businessID, brandID uuid.UUID) error {
+	used, err := c.queries.CheckBrandUsage(ctx, db.CheckBrandUsageParams{
+		BusinessID: businessID,
+		BrandID:    uuid.NullUUID{UUID: brandID, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if used {
+		return errors.New("cannot delete brand while active products are assigned to it")
+	}
+	return c.queries.DeleteBrand(ctx, db.DeleteBrandParams{
+		BusinessID: businessID,
+		ID:         brandID,
 	})
 }
 
