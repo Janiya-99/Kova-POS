@@ -106,7 +106,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 	})
 }
 
-// RunTenantMigrations executes isolated company schema migrations (excluding Master control plane 000010, and optionally 000002 demo seed).
+// RunTenantMigrations executes isolated company schema migrations (excluding Master control plane migrations, and optionally 000002 demo seed).
 func RunTenantMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string, includeDemoSeed bool) error {
 	if _, err := pool.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -118,7 +118,7 @@ func RunTenantMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir 
 	}
 
 	return applyMigrationsFiltered(ctx, pool, migrationsDir, func(base string) bool {
-		if strings.HasPrefix(base, "000010_") || strings.HasPrefix(base, "000012_") {
+		if strings.HasPrefix(base, "000010_") || strings.HasPrefix(base, "000012_") || strings.HasPrefix(base, "000014_") {
 			return false
 		}
 		if !includeDemoSeed && strings.HasPrefix(base, "000002_") {

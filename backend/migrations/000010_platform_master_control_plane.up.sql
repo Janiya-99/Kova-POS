@@ -42,13 +42,13 @@ ALTER TABLE audit_logs
     ADD COLUMN IF NOT EXISTS db_name TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS branch_name TEXT NOT NULL DEFAULT '';
 
--- Seed default Platform SuperAdmin (separate from any tenant company database)
+-- Seed default KOVA Platform SuperAdmin (separate from any tenant company database)
 INSERT INTO platform_admins (email, full_name, password_hash, title, is_active)
 VALUES (
-    'admin@zonaplatform.com',
-    'Platform Root Admin',
-    crypt('Zona@2026!', gen_salt('bf', 10)),
-    'Platform SuperAdmin',
+    'admin@kovapos.com',
+    'Kova Root Admin',
+    crypt('Kova@2026!', gen_salt('bf', 10)),
+    'Kova Platform SuperAdmin',
     TRUE
 )
 ON CONFLICT (email) DO NOTHING;
