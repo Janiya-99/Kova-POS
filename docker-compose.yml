@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: enterprise_pos_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pos_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pos_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-enterprise_pos}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/migrations/000001_init_3nf_schema.up.sql:/docker-entrypoint-initdb.d/01_init_3nf_schema.sql:ro
+      - ./backend/migrations/000002_seed_demo_data.up.sql:/docker-entrypoint-initdb.d/02_seed_demo_data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pos_admin} -d ${POSTGRES_DB:-enterprise_pos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: enterprise_pos_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: enterprise_pos_backend
+    restart: unless-stopped
+    environment:
+      PORT: "${PORT:-8080}"
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgres://pos_admin:pos_secret@postgres:5432/enterprise_pos?sslmode=disable}"
+      REDIS_ADDR: "${DOCKER_REDIS_ADDR:-redis:6379}"
+      JWT_SECRET: "${JWT_SECRET:-zona-pro-enterprise-pos-jwt-secret-2026}"
+      PIN_TOKEN_SECRET: "${PIN_TOKEN_SECRET:-zona-pro-supervisor-pin-secret-2026}"
+      CORS_ALLOW_ORIGINS: "${CORS_ALLOW_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}"
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: enterprise_pos_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+  redis_data:

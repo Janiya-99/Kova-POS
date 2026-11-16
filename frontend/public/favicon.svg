@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="kova-bg" x1="6" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1F242D" />
+      <stop offset="100%" stop-color="#0F1116" />
+    </linearGradient>
+    <linearGradient id="kova-accent" x1="28" y1="30" x2="46" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#10B981" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="18" fill="url(#kova-bg)" />
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="17.25" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="1.5" />
+  <rect x="19" y="17" width="6.5" height="30" rx="3.25" fill="#FFFFFF" />
+  <path d="M30 31.25L44 19" stroke="#FFFFFF" stroke-width="6.25" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M30 32.75L44.25 45.25" stroke="url(#kova-accent)" stroke-width="6.25" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

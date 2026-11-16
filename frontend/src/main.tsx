@@ -1,0 +1,49 @@
+import * as React from 'react';
+import ReactDOM from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Toaster } from 'sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { applyThemeToDOM, useThemeStore } from '@/store/themeStore';
+import { App } from './App';
+import './index.css';
+
+const initialTheme = useThemeStore.getState();
+applyThemeToDOM({
+  themeId: initialTheme.themeId,
+  customAccent: initialTheme.customAccent,
+  customCanvas: initialTheme.customCanvas,
+  customSurface: initialTheme.customSurface,
+  cornerPreset: initialTheme.cornerPreset,
+});
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60_000,
+      gcTime: 30 * 60_000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+    },
+  },
+});
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider delayDuration={80} skipDelayDuration={120}>
+        <App />
+      </TooltipProvider>
+      <Toaster
+        position="bottom-right"
+        richColors
+        toastOptions={{
+          style: {
+            borderRadius: 'var(--theme-radius-card)',
+            fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+          },
+        }}
+      />
+    </QueryClientProvider>
+  </React.StrictMode>
+);

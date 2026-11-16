@@ -1,0 +1,49 @@
+# AI Agent & Local Assistant Configs
+.agent/
+.agents/
+AGENTS.md
+
+# Environment & Secrets (keep .env.example committed)
+.env
+.env.*
+!.env.example
+
+# Dependencies & Frontend Build Outputs
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+dist-ssr/
+.vite/
+**/.vite/
+*.tsbuildinfo
+*.local
+
+# Backend Build Artifacts & Temp Files
+bin/
+tmp/
+backend/bin/
+backend/tmp/
+pos-api
+*.exe
+*.out
+*.test
+
+# Logs, Coverage & Test Outputs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# OS & Editor Metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
