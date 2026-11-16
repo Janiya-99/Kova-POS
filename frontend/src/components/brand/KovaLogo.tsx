@@ -1,65 +1,32 @@
-import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 export interface KovaMarkProps {
   className?: string;
+  variant?: 'app-dark' | 'app-light' | 'symbol';
 }
 
-/**
- * Clean geometric "K" emblem mark for Kova POS.
- */
-export function KovaMark({ className }: KovaMarkProps) {
-  const gradBgId = React.useId();
-  const gradAccentId = React.useId();
+const MARK_SRC_BY_VARIANT: Record<NonNullable<KovaMarkProps['variant']>, string> = {
+  'app-dark': '/brand/app-icons/03-dark-mode-app-icon-1024x1024.png',
+  'app-light': '/brand/app-icons/04-light-mode-app-icon-1024x1024.png',
+  symbol: '/brand/logos/02-kova-symbol-standalone.png',
+};
 
+/**
+ * Official KOVA POS emblem sourced from the brand asset collection.
+ */
+export function KovaMark({ className, variant = 'app-dark' }: KovaMarkProps) {
+  const src = MARK_SRC_BY_VARIANT[variant] || MARK_SRC_BY_VARIANT['app-dark'];
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 64 64"
-      fill="none"
-      aria-hidden="true"
-      className={cn('h-11 w-11 shrink-0 drop-shadow-sm', className)}
-    >
-      <defs>
-        <linearGradient id={gradBgId} x1="6" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#1F242D" />
-          <stop offset="100%" stopColor="#0F1116" />
-        </linearGradient>
-        <linearGradient id={gradAccentId} x1="28" y1="30" x2="46" y2="48" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#34D399" />
-          <stop offset="100%" stopColor="#10B981" />
-        </linearGradient>
-      </defs>
-      <rect x="2" y="2" width="60" height="60" rx="18" fill={`url(#${gradBgId})`} />
-      <rect
-        x="2.75"
-        y="2.75"
-        width="58.5"
-        height="58.5"
-        rx="17.25"
-        stroke="#FFFFFF"
-        strokeOpacity="0.14"
-        strokeWidth="1.5"
-      />
-      {/* Left architectural pillar */}
-      <rect x="19" y="17" width="6.5" height="30" rx="3.25" fill="#FFFFFF" />
-      {/* Upper diagonal arm */}
-      <path
-        d="M30 31.25L44 19"
-        stroke="#FFFFFF"
-        strokeWidth="6.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      {/* Lower diagonal leg in emerald accent */}
-      <path
-        d="M30 32.75L44.25 45.25"
-        stroke={`url(#${gradAccentId})`}
-        strokeWidth="6.25"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <img
+      src={src}
+      alt="KOVA POS"
+      draggable={false}
+      className={cn(
+        'h-11 w-11 shrink-0 select-none object-contain',
+        variant !== 'symbol' && 'rounded-[13px] shadow-sm',
+        className
+      )}
+    />
   );
 }
 
@@ -71,7 +38,7 @@ export interface KovaLogoProps {
 }
 
 /**
- * Complete Kova POS modern emblem + typography lockup ("K" mark + "Kova POS").
+ * Complete Kova POS official emblem + typography lockup.
  */
 export function KovaLogo({
   className,
@@ -88,7 +55,7 @@ export function KovaLogo({
             <span className="text-[19px] font-extrabold tracking-tight text-ink">
               Kova
             </span>
-            <span className="rounded-md bg-sidebar px-1.5 py-0.5 text-[10.5px] font-extrabold tracking-widest uppercase text-white">
+            <span className="rounded-md bg-gradient-to-r from-[#7C3AED] to-[#2563EB] px-1.5 py-0.5 text-[10.5px] font-extrabold tracking-widest uppercase text-white shadow-xs">
               POS
             </span>
           </div>
@@ -102,7 +69,7 @@ export function KovaLogo({
 
   return (
     <div className={cn('flex flex-col items-center text-center', className)}>
-      <KovaMark className={cn('mb-3.5 h-13 w-13', markClassName)} />
+      <KovaMark className={cn('mb-3.5 h-14 w-14 rounded-[16px]', markClassName)} />
       <div className="inline-flex items-center gap-2">
         <h1
           data-testid="login-brand-name"
@@ -110,7 +77,7 @@ export function KovaLogo({
         >
           Kova
         </h1>
-        <span className="rounded-lg bg-sidebar px-2 py-0.5 text-[12px] font-extrabold tracking-widest uppercase text-white shadow-xs">
+        <span className="rounded-lg bg-gradient-to-r from-[#7C3AED] to-[#2563EB] px-2 py-0.5 text-[12px] font-extrabold tracking-widest uppercase text-white shadow-xs">
           POS
         </span>
       </div>
@@ -120,4 +87,3 @@ export function KovaLogo({
     </div>
   );
 }
-

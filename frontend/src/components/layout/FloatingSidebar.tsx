@@ -1,15 +1,9 @@
 import * as React from 'react';
 import {
-  LayoutGrid,
-  ShoppingBag,
-  Package,
   Boxes,
-  Truck,
   Tags,
-  Users,
   BarChart3,
   ReceiptText,
-  SlidersHorizontal,
   HelpCircle,
   Settings,
   LogOut,
@@ -21,6 +15,8 @@ import {
   Printer,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { KovaMark } from '@/components/brand/KovaLogo';
+import { KOVA_POS_SHADCN_ICONS } from '@/components/brand/KovaSystemIcons';
 import { formatDisplayLabel } from '@/lib/formatLabel';
 import { getDisplayTradeName, useAuthStore } from '@/store/authStore';
 import { useT } from '@/store/i18nStore';
@@ -104,14 +100,6 @@ export function FloatingSidebar({
     context?.logo_dark_url ||
     context?.logo_sidebar_url ||
     '';
-  const primaryColorHex =
-    context?.primary_color_hex || publicBranding?.primary_color_hex || '#877FC1';
-  const brandInitials = tradeName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('') || 'RW';
   const [mobileMoreOpen, setMobileMoreOpen] = React.useState(false);
   const [expandedGroup, setExpandedGroup] = React.useState<string | null>(() =>
     findGroupForRoute(activeRoute)
@@ -154,7 +142,7 @@ export function FloatingSidebar({
         fullLabel: t.nav.overview,
         description: t.routes['/overview'].subtitle,
         shortcut: '1',
-        icon: LayoutGrid,
+        icon: KOVA_POS_SHADCN_ICONS.analytics,
         perm: 'analytics:view',
       },
     },
@@ -166,7 +154,7 @@ export function FloatingSidebar({
         fullLabel: t.nav.pos,
         description: t.routes['/pos'].subtitle,
         shortcut: '2',
-        icon: ShoppingBag,
+        icon: KOVA_POS_SHADCN_ICONS.posTerminal,
         perm: 'pos:view',
         badge: heldCount,
       },
@@ -176,7 +164,7 @@ export function FloatingSidebar({
       group: {
         id: 'catalog',
         label: t.nav.catalog,
-        icon: Package,
+        icon: KOVA_POS_SHADCN_ICONS.inventory,
         children: [
           {
             route: '/products',
@@ -184,7 +172,7 @@ export function FloatingSidebar({
             fullLabel: t.nav.products,
             description: t.routes['/products'].subtitle,
             shortcut: '3',
-            icon: Package,
+            icon: KOVA_POS_SHADCN_ICONS.retail,
             perm: 'catalog:view',
           },
           {
@@ -207,7 +195,7 @@ export function FloatingSidebar({
         fullLabel: t.nav.customers,
         description: t.routes['/customers'].subtitle,
         shortcut: '5',
-        icon: Users,
+        icon: KOVA_POS_SHADCN_ICONS.customers,
         perm: 'customers:view',
       },
     },
@@ -224,7 +212,7 @@ export function FloatingSidebar({
             fullLabel: t.nav.suppliers,
             description: t.routes['/suppliers'].subtitle,
             shortcut: '6',
-            icon: Truck,
+            icon: KOVA_POS_SHADCN_ICONS.suppliers,
             perm: 'inventory:view',
           },
           {
@@ -233,7 +221,7 @@ export function FloatingSidebar({
             fullLabel: t.nav.inventory,
             description: t.routes['/inventory'].subtitle,
             shortcut: '7',
-            icon: Boxes,
+            icon: KOVA_POS_SHADCN_ICONS.inventory,
             perm: 'inventory:view',
           },
         ],
@@ -252,7 +240,7 @@ export function FloatingSidebar({
             fullLabel: t.nav.reports,
             description: t.routes['/reports'].subtitle,
             shortcut: '8',
-            icon: BarChart3,
+            icon: KOVA_POS_SHADCN_ICONS.reports,
             perm: 'analytics:view',
           },
           {
@@ -287,7 +275,7 @@ export function FloatingSidebar({
         fullLabel: t.nav.settings,
         description: t.routes['/settings'].subtitle,
         shortcut: '0',
-        icon: SlidersHorizontal,
+        icon: KOVA_POS_SHADCN_ICONS.settings,
         perm: 'settings:view',
       },
     },
@@ -368,13 +356,10 @@ export function FloatingSidebar({
                   className="h-7 w-7 rounded-[6px] object-contain shrink-0 bg-white/95 p-0.5 ring-1 ring-white/25"
                 />
               ) : (
-                <span
+                <KovaMark
                   data-testid="sidebar-brand-monogram"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-[10.5px] font-extrabold text-white shadow-xs"
-                  style={{ backgroundColor: primaryColorHex }}
-                >
-                  {brandInitials}
-                </span>
+                  className="h-7 w-7 rounded-[7px]"
+                />
               )}
               {expanded && (
                 <div className="min-w-0 text-left">
