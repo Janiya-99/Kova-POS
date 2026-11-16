@@ -11,9 +11,24 @@
 
 KOVA POS is a modern, cloud-native, offline-capable point-of-sale and double-entry accounting platform built with a **Go + Fiber v2 + PostgreSQL 16 + Redis 7.2** backend and a **React 19 + TypeScript + Vite + Dexie.js** frontend.
 
+- **Complete System User Guide (Fresh User Manual):** [`USER_GUIDE.md`](USER_GUIDE.md)
+- **Empirical Performance, Concurrency & Security Report:** [`PERFORMANCE_AND_SECURITY.md`](PERFORMANCE_AND_SECURITY.md)
 - **Full Architecture Document (GitHub-Readable):** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **System Design Document (SDD):** [`docs/sdd.md`](docs/sdd.md)
 - **Setup & Environment Configuration:** [`#project-setup-guide`](#project-setup-guide) · [`.env.example`](.env.example)
+
+### Quick-Start Portals & Default Login Credentials (`Kova Mobile Hub`)
+
+| Portal / Account | URL | Email | Password | PIN / Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| **Company Workspace Login (Smart Discovery)** | `http://localhost:5173/login` | `owner@kovamobile.lk` | `Kova@2026!` | `BusinessOwner` (`Store Director`), Supervisor PIN `123456` |
+| **1-to-1 Company Portal (`Kova Mobile Hub`)** | `http://localhost:5173/c/kova-mobile/login` | `manager@kovamobile.lk` | `Kova@2026!` | `BranchManager` (`COL-01`), Supervisor PIN `123456` |
+| **Device & IMEI Specialist (`KND-02`)** | `http://localhost:5173/login` | `specialist@kovamobile.lk` | `Kova@2026!` | `BranchManager` (`Kandy City Tech Lounge`), PIN `123456` |
+| **Sales Associate / Cashier (`COL-01`)** | `http://localhost:5173/login` | `cashier@kovamobile.lk` | `Kova@2026!` | `Cashier` (POS Terminal checkout & held bills) |
+| **Senior Accountant (`COL-01`)** | `http://localhost:5173/login` | `accountant@kovamobile.lk` | `Kova@2026!` | `Accountant` (Double-Entry GL, Trial Balance, Fiscal Locks) |
+| **Serialized Stock Controller (`GAL-03`)** | `http://localhost:5173/login` | `inventory@kovamobile.lk` | `Kova@2026!` | `InventoryController` (FIFO Batches, POs, GRN Intake, Brands) |
+| **Platform SuperAdmin Control Plane** | `http://localhost:5173/admin/login` | `admin@kovapos.com` | `Kova@2026!` | Isolated `PLATFORM_ADMIN` root portal (`enterprise_pos`) |
+| **pgAdmin 4 Database Console** | `http://localhost:5050` | `admin@kovapos.com` | `Kova@2026!` | Pre-connected to `postgres:5432` (`pos_admin` / `pos_secret_2026`) |
 
 ---
 
@@ -88,7 +103,7 @@ flowchart TB
 
 1. **Dual-Scope Database-Per-Company Topology:**
    - **Master Control Plane (`enterprise_pos`):** Houses Platform SuperAdmin identities, platform sessions, cross-tenant company provisioning records, and global audit logs — isolated behind `PlatformAdminMiddleware` (`PLATFORM_ADMIN` JWT scope only).
-   - **Isolated Tenant Databases (`pos_tenant_<slug>`):** Each company receives its own physical PostgreSQL 16 database provisioned, migrated, and lazily pooled (`MaxConns = 10` per tenant) by [`TenantManager`](backend/internal/infrastructure/tenant/manager.go), with every business-scoped query filtered by `business_id` from verified JWT claims.
+   - **Isolated Tenant Databases (`pos_tenant_<slug>`):** Each company receives its own physical PostgreSQL 16 database provisioned, migrated, and lazily pooled (`MaxConns = 25` per tenant) by [`TenantManager`](backend/internal/infrastructure/tenant/manager.go), with every business-scoped query filtered by `business_id` from verified JWT claims.
 2. **6-Level Settings Inheritance Hierarchy:**
    Settings resolve dynamically from broadest fallback down to individual SKU (`System Default -> Business -> Branch / Warehouse -> Terminal -> Category -> Product`), cached in Redis with a thread-safe in-memory TTL fallback and pushed live via WebSocket (`SETTINGS_UPDATED`).
 3. **Zero Floating-Point Currency Math:**
@@ -130,18 +145,21 @@ flowchart TB
 ### Infrastructure (`docker-compose.yml`, `frontend/nginx.conf`)
 | Service | Image / Tool | Role |
 | :--- | :--- | :--- |
-| Database | `postgres:16-alpine` | Master Control DB (`enterprise_pos`) + dynamic isolated `pos_tenant_<slug>` DBs (13 versioned migrations) |
+| Database | `postgres:16-alpine` | Master Control DB (`enterprise_pos`) + dynamic isolated `pos_tenant_<slug>` DBs (16 versioned migrations) |
 | Cache & Broker | `redis:7.2-alpine` (`--appendonly yes`) | Persistent AOF Redis for rate limits, 6-level settings cache, session validation cache, and Asynq jobs |
 | API Container | Multi-stage Alpine (`backend/Dockerfile`) | Serves REST & WebSocket API on `:8080` with healthcheck (`/api/v1/health`) |
 | Web Edge | `nginx` (`frontend/Dockerfile`, `frontend/nginx.conf`) | Serves immutable hashed assets, gzip compression, SPA routing, and proxies `/api/` + `/ws` to backend |
+| DB Admin UI | `dpage/pgadmin4:8.14` | Pre-configured pgAdmin 4 console on `:5050` (`admin@kovapos.com` / `Kova@2026!`) |
 
 ---
 
 ## Performance, Security & Reliability
 
+> For full empirical `EXPLAIN (ANALYZE, BUFFERS)` query plans, endpoint latency percentiles (`min`/`avg`/`p50`/`p95`/`max`), 25-goroutine concurrency stress results, and 11-point security & database trigger verification against the `2023–2027` dataset (`17,864` rows), see [`PERFORMANCE_AND_SECURITY.md`](PERFORMANCE_AND_SECURITY.md).
+
 ### Performance Engineering
 - **Sub-Millisecond Cache Hierarchy:** 6-level settings lookups short-circuit in Redis (`REDIS_CACHE`) or Go's in-process `sync.RWMutex` TTL cache (`MEMORY_CACHE`) before touching PostgreSQL.
-- **Bounded Per-Tenant Connection Pooling:** Lazy initialization of `pgxpool` instances (`MaxConns = 10` per active tenant DB) prevents cold connection storms across idle tenants.
+- **Bounded Per-Tenant Connection Pooling:** Lazy initialization of `pgxpool` instances (`MaxConns = 25` per active tenant DB) prevents cold connection storms across idle tenants while sustaining 25+ concurrent checkout bursts.
 - **Async Offloading:** Post-checkout inventory threshold checks and Auto-PO drafting execute asynchronously via Asynq (`Concurrency: 4`) so register checkout latency stays independent of supplier PO generation.
 - **Edge & Asset Optimization:** Nginx serves `/assets/` with `Cache-Control: public, max-age=31536000, immutable` + `gzip`, while Dexie.js serves catalog and tax lookups locally in IndexedDB and zero-CLS `1:1` skeletons eliminate layout shift during data loads.
 
@@ -319,8 +337,13 @@ Docker automatically runs `000001_init_3nf_schema.up.sql`, `000002_seed_demo_dat
 sqlc generate -f backend/sqlc.yaml
 
 # Backend compile & unit tests (Config, RBAC, Rate Limiter, Tax, FIFO, Accounting, Print Studio, Sessions)
+# Backend compile + unit/integration test suite
 go -C backend build ./...
-go -C backend test -count=1 ./...
+go -C backend test -race -count=1 ./...
+
+# Seed fresh Kova Mobile Hub (2023-2027 dataset, 16 brands, 40 products) & run empirical verification
+POSTGRES_PORT=5433 REDIS_ADDR=localhost:6379 go -C backend run ./cmd/seed-mobile
+POSTGRES_PORT=5433 REDIS_ADDR=localhost:6379 API_BASE_URL=http://localhost:8080/api/v1 go -C backend run ./cmd/verify-kova
 
 # Frontend strict TypeScript check + production bundle
 npm --prefix frontend run build
