@@ -118,7 +118,7 @@ flowchart TB
 ### Infrastructure (`docker-compose.yml`, `frontend/nginx.conf`)
 | Service | Image / Tool | Role |
 | :--- | :--- | :--- |
-| Database | `postgres:16-alpine` | Master Control DB (`enterprise_pos`) + dynamic isolated `pos_tenant_<slug>` DBs (12 versioned migrations) |
+| Database | `postgres:16-alpine` | Master Control DB (`enterprise_pos`) + dynamic isolated `pos_tenant_<slug>` DBs (13 versioned migrations) |
 | Cache & Broker | `redis:7.2-alpine` (`--appendonly yes`) | Persistent AOF Redis for rate limits, 6-level settings cache, session validation cache, and Asynq jobs |
 | API Container | Multi-stage Alpine (`backend/Dockerfile`) | Serves REST & WebSocket API on `:8080` with healthcheck (`/api/v1/health`) |
 | Web Edge | `nginx` (`frontend/Dockerfile`, `frontend/nginx.conf`) | Serves immutable hashed assets, gzip compression, SPA routing, and proxies `/api/` + `/ws` to backend |
@@ -173,7 +173,7 @@ POS/
 │   │   ├── repository/sqlc/               # SQL query definitions & sqlc-generated pgx/v5 bindings
 │   │   ├── usecase/                       # Auth, FIFO inventory, Tax engine, GL, Analytics, Print Studio, 6-level settings
 │   │   └── worker/                        # Asynq low-stock Auto-PO background worker
-│   ├── migrations/                        # 12 sequential up/down SQL migrations + demo seed
+│   ├── migrations/                        # 13 sequential up/down SQL migrations + demo seed
 │   ├── Dockerfile
 │   ├── go.mod
 │   └── sqlc.yaml
@@ -238,8 +238,14 @@ cp .env.example .env
 | `REDIS_ADDR` | `localhost:6379` | Redis address for native host development |
 | `DOCKER_REDIS_ADDR` | `redis:6379` | Redis address used inside Docker Compose |
 | `VITE_API_TARGET` | `http://localhost:8080` | Backend target used by Vite dev proxy (`/api` and `/ws`) |
+| `APP_BASE_URL` | `http://localhost:5173` | Public frontend base URL embedded in password-reset email links |
+| `SMTP_HOST` | *(optional / e.g. `smtp.gmail.com` or `localhost`)* | SMTP relay hostname for sending password reset OTP & direct reset link emails |
+| `SMTP_PORT` | `587` | SMTP port (`465` implicit TLS, `587` STARTTLS, or `1025` for local Mailpit) |
+| `SMTP_USER` | *(your SMTP username)* | SMTP authentication username (leave blank for unauthenticated local Mailpit) |
+| `SMTP_PASSWORD` | *(your SMTP password / App Password)* | SMTP authentication password |
+| `SMTP_FROM` | `"KOVA POS <no-reply@kovapos.local>"` | Email `From` display name & envelope sender address |
 
-> **Security Note:** Never commit your `.env` file with real production secrets. `.env` is ignored in `.gitignore`, while `.env.example` provides safe local development defaults.
+> **Security & Local Email Testing Note:** Never commit your `.env` file with real production secrets. `.env` is ignored in `.gitignore`, while `.env.example` provides safe templates. To test password reset emails locally without an external SMTP account, run `docker compose --profile dev-mail up -d mailpit` (sets SMTP on `localhost:1025` and web inbox at `http://localhost:8025`) with `SMTP_HOST=localhost` and `SMTP_PORT=1025` in `.env`.
 
 ### Step 2: Run the Application
 
@@ -254,7 +260,7 @@ docker compose up --build
 - **PostgreSQL 16:** `localhost:5432`
 - **Redis 7.2:** `localhost:6379`
 
-Docker automatically runs `000001_init_3nf_schema.up.sql`, `000002_seed_demo_data.up.sql`, and applies all subsequent migrations (`000003`–`000012`) on backend startup, including provisioning the default isolated tenant DB (`pos_tenant_zona_retail`).
+Docker automatically runs `000001_init_3nf_schema.up.sql`, `000002_seed_demo_data.up.sql`, and applies all subsequent migrations (`000003`–`000013`) on backend startup, including provisioning the default isolated tenant DB (`pos_tenant_zona_retail`).
 
 #### Option B — Local Host Development (Hot Reload)
 
